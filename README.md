@@ -7,5 +7,10 @@ Extending DreamerV3 for robotic application and better Morphologieawareness by i
 
 [miroboard](https://miro.com/welcomeonboard/cEVObU1TdjYyeTBRMjM0SEZubXFGaFFGdXB0WUwzYjRoc3pRRURXRnZ6T3ZmY3g3MUNiL3NTV2R5UktOMm1EcFJ1eGkzRlByQk16UFMxNUlBYUkvM0crSjRXTWUxclYzT3UxSXN4V1lDVjBIM2RxWnRFT1JGamNqUVdIK0lpQ3ZyVmtkMG5hNDA3dVlncnBvRVB2ZXBnPT0hdjE=?share_link_id=935135186188)
 
+## Usage
+
+- run main.py to start
+- modify config to change all relevant Dreamer and FFKSM parameters
+
 ## Acknowledgements
 
