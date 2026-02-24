@@ -13,7 +13,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Torch version:", torch.__version__)
 print("device: ", device)
 
-
+#hallo da bin ich
 def main(configFile):
     config = loadConfig(configFile)
     seedEverything(config.seed)
