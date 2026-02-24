@@ -97,6 +97,7 @@ selfModel:
     nfSize: 0.4
     saveImageDuringTraining: True
     nIters: 400000
+    lossGoal: 0.0001
 
 folderNames:
     metricsFolder: metrics

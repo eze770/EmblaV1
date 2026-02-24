@@ -13,5 +13,9 @@ Extending DreamerV3 for robotic application and better Morphologieawareness by i
 - run main.py to start
 - modify config to change all relevant Dreamer and FFKSM parameters
 
+## Current state
+
+runs but Selfmodel is not affecting Actor yet. Also no Filter for SM inputs
+
 ## Acknowledgements
 
