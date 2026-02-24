@@ -32,7 +32,7 @@ def main(configFile):
     observationShape, actionSize, actionLow, actionHigh = getEnvProperties(env)
     print(f"envProperties: obs {observationShape}, action size {actionSize}, actionLow {actionLow}, actionHigh {actionHigh}")
 
-    dreamer = Dreamer(observationShape, actionSize, actionLow, actionHigh, device, config.dreamer)
+    dreamer = Dreamer(observationShape, actionSize, actionLow, actionHigh, device, config.dreamer, seed=config.seed, robotid=config.robotID, runName=config.runName)
     if config.resume:
         dreamer.loadCheckpoint(checkpointToLoad)
 
@@ -52,7 +52,7 @@ def main(configFile):
                 evaluationScore = dreamer.environmentInteraction(envEvaluation, config.numEvaluationEpisodes, seed=config.seed, evaluation=True, saveVideo=True, filename=f"{videoFilenameBase}_{suffix}")
                 print(f"Saved Checkpoint and Video at {suffix:>6} gradient steps. Evaluation score: {evaluationScore:>8.2f}")
 
-        if dreamer.totalGradientSteps - config.startSelfmodel == 0:  # set startSelfmodel to 4500 (eze)
+        if dreamer.totalGradientSteps - config.startSelfmodel == 0:
             sm_train.main(config, dreamer.buffer)
 
         mostRecentScore = dreamer.environmentInteraction(env, config.numInteractionEpisodes, seed=config.seed)

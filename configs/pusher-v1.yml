@@ -1,6 +1,7 @@
 environmentName: Pusher-v5
 runName: SMTestRun2
 seed: 1
+robotID: 1
 
 gradientSteps: 60000
 replayRatio: 100
@@ -90,14 +91,19 @@ dreamer:
         numLayers: 3 
         activation: Tanh
 
-selfModel:
-    positionalEncoder: True
-    dof: 7
-    camDist: 4.0
-    nfSize: 0.4
-    saveImageDuringTraining: True
-    nIters: 400000
-    lossGoal: 0.0001
+    selfModel:
+        sim_real: 'sim'
+        arm_ee: 'ee'
+        positionalEncoder: True
+        dof: 7
+        camDist: 4.0
+        nfSize: 0.4
+        saveImageDuringTraining: True
+        nIters: 400000
+        chunkSize: 2 ** 20
+        nSamples: 64
+        cameraFOV: 45.
+        lossGoal: 0.0001
 
 folderNames:
     metricsFolder: metrics

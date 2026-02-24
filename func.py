@@ -370,12 +370,16 @@ def model_forward(
         output_flag: int = 0
 ):
 
+    if output_flag == 4:  # 4 is mode 0 with latent output, (eze)
+        output_flag = 0
+        return_latents = True
+
     # Sample query points along each ray.
     query_points, z_vals = sample_stratified(
         rays_o, rays_d, arm_angle, near, far, n_samples=n_samples)
     # Prepare batches.
 
-    # arm_angle = arm_angle / 180 * np.pi  # not used here because angles already are in rad (eze)
+    # arm_angle = arm_angle / 180 * np.pi  # not used here because angles already are in rad, (eze)
     if DOF > 2:
         model_input = torch.cat((query_points, arm_angle[2:DOF].repeat(list(query_points.shape[:2]) + [1])), dim=-1)
 
@@ -386,7 +390,11 @@ def model_forward(
     predictions = []
     for batch in batches:
         batch = batch.to(device)
-        predictions.append(model(batch))
+        if return_latents:
+            prediction, latent_state = model(batch)
+        else:
+            prediction = model(batch)
+        predictions.append(prediction)
     raw = torch.cat(predictions, dim=0)
     raw = raw.reshape(list(query_points.shape[:2]) + [raw.shape[-1]])
 
@@ -407,7 +415,10 @@ def model_forward(
         'query_points': query_points}
 
     # Store outputs.
-    return outputs
+    if return_latents:
+        return outputs, latent_state
+    else:
+        return outputs
 
 
 # ---------------------------------------------------------
@@ -461,6 +472,26 @@ def plot_3d_visual(x, y, z, if_transform=True):
                  z, s=1
                  )
     # ax.scatter3D(0,0,0)
+
+
+# ---------------------------------------------------------
+# calculating specs for SM, (eze)
+# ---------------------------------------------------------
+def forwardSpecs(config, img):
+    Camera_FOV = config.selfModel.cameraFOV
+    height, width = img.shape[1:]
+    camera_angle_y = Camera_FOV * np.pi / 180.
+    focal = 0.5 * height / np.tan(0.5 * camera_angle_y)
+
+    rays_o, rays_d = get_rays(height, width, focal)
+    DOF = config.selfModel.dof
+    cam_dist = config.selfModel.camDist
+    nf_size = config.selfModel.nfSize
+    near, far = cam_dist - nf_size, cam_dist + nf_size  # real scale dist=1.0
+    n_samples = config.selfModel.nSamples
+    chunksize = config.selfModel.chunkSize  # Modify as needed to fit in GPU memory
+
+    return DOF, near, far, n_samples, chunksize, rays_o, rays_d
 
 
 if __name__ == "__main__":

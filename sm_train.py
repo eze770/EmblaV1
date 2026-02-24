@@ -1,7 +1,7 @@
 # Our implementation is based on the NeRF publicly available code from https://github.com/krrish94/nerf-pytorch/ and
 # https://github.com/bmild/nerf
 import random
-from selfmodel import FBV_SM, PositionalEncoder
+from networks import FBV_SM, PositionalEncoder
 from func import *
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -20,7 +20,7 @@ def crop_center(
     return img[h_offset:-h_offset, w_offset:-w_offset]
 
 
-def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_size=2, FLAG_PositionalEncoder = False):
+def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_size=2, FLAG_PositionalEncoder = False, return_latent=False):
 
     if FLAG_PositionalEncoder:
         encoder = PositionalEncoder(d_input, n_freqs=10, log_space=True)
@@ -28,13 +28,15 @@ def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_si
         model = FBV_SM(encoder = encoder,
                        d_input=d_input,
                        d_filter=d_filter,
-                       output_size=output_size)
+                       output_size=output_size,
+                       return_latent=return_latent)
 
     else:
         # Models
         model = FBV_SM(d_input=d_input,
                        d_filter=d_filter,
-                       output_size=output_size)
+                       output_size=output_size,
+                       return_latent=return_latent)
     model.to(device)
     # Pretrained Model
     if pretrained_model_pth != None:
@@ -183,11 +185,11 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
 
 def main(config, buffer):
     print("\n\nSelfmodel-training initialized...\n")
-    sim_real = 'sim'
-    arm_ee = 'ee'
-    seed_num = 1
-    robotid = 1
-    FLAG_PositionalEncoder = config.selfModel.positionalEncoder
+    sim_real = config.dreamer.selfModel.sim_real
+    arm_ee = config.dreamer.selfModel.arm_ee
+    seed_num = config.seed
+    robotid = config.robotID
+    FLAG_PositionalEncoder = config.dreamer.selfModel.positionalEncoder
 
     # 0:OM, 1:OneOut, 2: OneOut with distance
     different_arch = 0
@@ -197,10 +199,10 @@ def main(config, buffer):
     random.seed(seed_num)
     torch.manual_seed(seed_num)
 
-    DOF = config.selfModel.dof  # the number of motors  # dof4 apr03
+    DOF = config.dreamer.selfModel.dof  # the number of motors  # dof4 apr03
 
-    cam_dist = 1.0
-    nf_size = 0.4
+    cam_dist = config.dreamer.selfModel.camDist
+    nf_size = config.dreamer.selfModel.nfSize
     near, far = cam_dist - nf_size, cam_dist + nf_size  # real scale dist=1.0
     Flag_save_image_during_training = True
 
@@ -216,8 +218,8 @@ def main(config, buffer):
     # data = np.load('data/%s_data/%s_data_robo%d(%s)_cam%d_test.npz'%(sim_real,sim_real,robotid,arm_ee,800)) # 800 test is 1000 ... local data, Jiong
 
     print("DOF, robot_id, PE", DOF, robotid, FLAG_PositionalEncoder)
-    LOG_PATH = "train_log/%s_id%d_%d(%d)_%s(%s)_%s" % (sim_real, robotid, 1, seed_num, add_name, arm_ee, config.runName)
-    config = config.selfModel
+    LOG_PATH = "train_log/%s_id%d_(%d)_%s(%s)_%s" % (sim_real, robotid, seed_num, add_name, arm_ee, config.runName)
+    config = config.dreamer.selfModel
     if different_arch != 0:
         LOG_PATH += 'diff_out_%d' % different_arch
     print("Data Loaded!")
@@ -233,7 +235,7 @@ def main(config, buffer):
     """arm dof = 2+3; arm dof=3+3"""
 
     # Stratified sampling
-    n_samples = 64  # Number of spatial samples per ray
+    n_samples = config.nSamples  # Number of spatial samples per ray
     perturb = True  # If set, applies noise to sample positions
     inverse_depth = False  # If set, samples points linearly in inverse depth
 
@@ -244,7 +246,7 @@ def main(config, buffer):
     # Training
     n_iters = config.nIters  # default = 400000 (eze)
     one_image_per_step = True  # One image per gradient step (disables batching)  # No use again (eze)
-    chunksize = 2 ** 20  # Modify as needed to fit in GPU memory
+    chunksize = config.chunkSize  # Modify as needed to fit in GPU memory
     center_crop = True  # Crop the center of image (one_image_per_)   # debug
     center_crop_iters = 200  # Stop cropping center after this many epochs
     display_rate = 1000  # int(select_data_amount*tr)  # Display test output every X epochs  # only use in train (eze)
