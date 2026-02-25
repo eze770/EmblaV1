@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # EmblaV1
 Extending DreamerV3 for robotic application and better Morphologieawareness by implementing a FFKSM
 =======

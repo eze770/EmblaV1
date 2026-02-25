@@ -208,7 +208,6 @@ def main(config, buffer, totalGradientSteps):
 
     # 0:OM, 1:OneOut, 2: OneOut with distance
     different_arch = 0
-    print('different_arch', different_arch)
 
     np.random.seed(seed_num)
     random.seed(seed_num)
@@ -225,14 +224,6 @@ def main(config, buffer, totalGradientSteps):
         add_name = 'PE'
     else:
         add_name = 'no_PE'
-
-    pxs = 100  # collected data pixels  # no usage (eze)
-
-    # np.load('data/%s_data/%s_data_robo%d(%s).npz'%(sim_real,sim_real,robotid,arm_ee))  # needs Image, Angle, focal (eze)
-    # data = np.load('data/%s_data/%s_data_robo%d(%s)_cam%d.npz'%(sim_real,sim_real,robotid,arm_ee,cam_dist*1000))
-    # data = np.load('data/%s_data/%s_data_robo%d(%s)_cam%d_test.npz'%(sim_real,sim_real,robotid,arm_ee,800)) # 800 test is 1000 ... local data, Jiong
-
-    print("DOF, robot_id, PE", DOF, robotid, FLAG_PositionalEncoder)
 
     LOG_PATH = "train_log/%s_id%d_(%d)_%s(%s)_%s" % (sim_real, robotid, seed_num, add_name, arm_ee, config.runName)
 
