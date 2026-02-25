@@ -40,9 +40,9 @@ def main(configFile):
 
     iterationsNum = config.gradientSteps // config.replayRatio
     for _ in tqdm(range(iterationsNum), desc="OverallProgress", colour="green"):
+        if (config.dreamer.selfModel.nIters / config.dreamer.selfModel.displayRate) - dreamer.totalGradientSteps >= 0:
+            sm_train.main(config, dreamer.buffer, dreamer.totalGradientSteps)  # initialize SelfModel training, (eze)
         for _ in tqdm(range(config.replayRatio), desc="Dream", colour="blue"):
-            if (config.dreamer.selfModel.nIters / config.dreamer.selfModel.displayRate) - dreamer.totalGradientSteps >= 0:
-                sm_train.main(config, dreamer.buffer, dreamer.totalGradientSteps)  # initialize SelfModel training, (eze)
             sampledData                         = dreamer.buffer.sample(dreamer.config.batchSize, dreamer.config.batchLength)
             initialStates, worldModelMetrics    = dreamer.worldModelTraining(sampledData)
             behaviorMetrics                     = dreamer.behaviorTraining(initialStates)

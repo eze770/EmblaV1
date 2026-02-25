@@ -23,6 +23,13 @@ class Dreamer:
         self.latentSize     = config.latentLength*config.latentClasses
         self.fullStateSize  = config.recurrentSize + self.latentSize
 
+        if self.config.selfModel.positionalEncoder:
+            add_name = 'PE'
+        else:
+            add_name = 'no_PE'
+        self.pretrained_selfModel_pth = "train_log/%s_id%d_(%d)_%s(%s)_%s" % (self.config.selfModel.sim_real, robotid, seed, add_name, self.config.selfModel.arm_ee, runName)  # remove later when implementing sm_train into dreamer.py, (eze)
+        os.makedirs(self.pretrained_selfModel_pth + "/best_model/", exist_ok=True)
+
         self.actor                             = Actor(self.fullStateSize, actionSize, actionLow, actionHigh, device,                                  config.actor          ).to(self.device)
         self.critic                            = Critic(self.fullStateSize,                                                                            config.critic         ).to(self.device)
         self.encoder                           = EncoderConv(observationShape, self.config.encodedObsSize,                                             config.encoder        ).to(self.device)
@@ -31,7 +38,7 @@ class Dreamer:
         self.priorNet                          = PriorNet(config.recurrentSize, config.latentLength, config.latentClasses,                             config.priorNet       ).to(self.device)
         self.posteriorNet                      = PosteriorNet(config.recurrentSize + config.encodedObsSize, config.latentLength, config.latentClasses, config.posteriorNet   ).to(self.device)
         self.rewardPredictor                   = RewardModel(self.fullStateSize,                                                                       config.reward         ).to(self.device)
-        self.selfModel, self.smOptimizer       = init_models(d_input=(config.selfModel.dof - 2) + 3, d_filter=128, output_size=2, FLAG_PositionalEncoder=config.selfModel.positionalEncoder, return_latent=True)  # SelfModel (already on device), (eze)
+        self.selfModel, self.smOptimizer       = init_models(d_input=(config.selfModel.dof - 2) + 3, d_filter=128, pretrained_model_pth=self.pretrained_selfModel_pth + "/best_model/best_model.pt", output_size=2, FLAG_PositionalEncoder=config.selfModel.positionalEncoder, return_latent=True)  # SelfModel (already on device), (eze)
 
         if config.useContinuationPrediction:
             self.continuePredictor  = ContinueModel(self.fullStateSize,                                                              config.continuation   ).to(self.device)
@@ -52,11 +59,7 @@ class Dreamer:
         self.totalEnvSteps      = 0
         self.totalGradientSteps = 0
 
-        if self.config.selfModel.positionalEncoder:
-            add_name = 'PE'
-        else:
-            add_name = 'no_PE'
-        self.pretrained_selfModel_pth = "train_log/%s_id%d_(%d)_%s(%s)_%s" % (self.config.selfModel.sim_real, robotid, seed, add_name, self.config.selfModel.arm_ee, runName)
+        torch.save(self.selfModel.state_dict(), self.pretrained_selfModel_pth + '/best_model/best_model.pt')  # save one random latent state for Dreamer start, (eze)
 
 
     def worldModelTraining(self, data):
@@ -184,22 +187,23 @@ class Dreamer:
 
             observation = env.reset(seed= (seed + self.totalEpisodes if seed else None))
             encodedObservation = self.encoder(torch.from_numpy(observation).float().unsqueeze(0).to(self.device))
-            angles = env.unwrapped.data.qpos.copy()[:7]
+            angles = torch.as_tensor(env.unwrapped.data.qpos.copy()[:7], device=torch.device("cpu"), dtype=torch.float32)
             DOF, near, far, n_samples, chunksize, rays_o, rays_d = forwardSpecs(config=self.config, img=observation)
 
             currentScore, stepCount, done, frames = 0, 0, False, []
             while not done:
                 recurrentState              = self.recurrentModel(recurrentState, latentState, action)
                 latentState, _              = self.posteriorNet(torch.cat((recurrentState, encodedObservation.view(1, -1)), -1))
-                selfModel = self.selfModel.load_state_dict(torch.load(self.pretrained_selfModel_pth + "best_model.pt", map_location=torch.device(device)))
+                selfModel = self.selfModel
+                selfModel.eval()
                 smOutputs, smLatentState    = model_forward(rays_o, rays_d, near, far, selfModel, angles, DOF, chunksize, n_samples, output_flag=4)
-                print("smOutputs: ", smOutputs, "smLatentState: ", smLatentState)  # debugging, (eze)
+                #print("smOutputs: ", smOutputs, "smLatentState: ", smLatentState)  # debugging, (eze)
 
                 action          = self.actor(torch.cat((recurrentState, latentState), -1))
                 actionNumpy     = action.cpu().numpy().reshape(-1)
 
                 nextObservation, reward, done = env.step(actionNumpy)
-                angles = env.unwrapped.data.qpos.copy()[:7]  # qpos from documentation (eze)
+                angles = torch.as_tensor(env.unwrapped.data.qpos.copy()[:7], device=torch.device("cpu"), dtype=torch.float32)  # qpos from documentation, (eze)
                 if not evaluation:
                     self.buffer.add(observation, actionNumpy, reward, nextObservation, done, angles)
 

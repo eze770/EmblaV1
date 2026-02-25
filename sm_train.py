@@ -3,7 +3,6 @@
 import random
 from networks import FBV_SM, PositionalEncoder
 from func import *
-import dreamer
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print("train,", device)
@@ -41,7 +40,7 @@ def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_si
     model.to(device)
     # Pretrained Model
     if pretrained_model_pth != None:
-        model.load_state_dict(torch.load(pretrained_model_pth + "best_model.pt", map_location=torch.device(device)))
+        model.load_state_dict(torch.load(pretrained_model_pth, map_location=torch.device(device)))
     # Optimizer
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -51,8 +50,6 @@ def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_si
 def updateData(buffer):
     training_imges_snapshot = buffer.getData().nextObservations.clone()
     training_angles_snapshot = buffer.getData().angles.clone()
-    print("SM img data size: ", len(training_imges_snapshot))
-    print("SM angles data size: ", len(training_angles_snapshot))
 
     tr = 0.8  # training ratio
     buffer_size = buffer.getIndex()
@@ -64,19 +61,21 @@ def updateData(buffer):
     testing_angles = training_angles_snapshot[sample_id[int(buffer_size * tr):]]
     testing_img = training_imges_snapshot[sample_id[int(buffer_size * tr):]]
     valid_amount = len(testing_angles)
-    print("SM Validation amount: ", valid_amount)
 
     return training_img, training_angles, testing_angles, testing_img, valid_amount
 
 
 def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH,
-          chunksize, center_crop, center_crop_iters, record_file_train, record_file_val, Patience_threshold, buffer, config, totalGradientSteps):
+          center_crop, center_crop_iters, record_file_train, record_file_val, Patience_threshold, buffer, config, totalGradientSteps):
 
     Camera_FOV = 45.
     camera_angle_y = Camera_FOV * np.pi / 180.
     focal = 0.5 * 64 / np.tan(0.5 * camera_angle_y)
 
     training_img, training_angles, testing_angles, testing_img, valid_amount = updateData(buffer)  # get first dataSnapshot, (eze)
+    print("SM img data size: ", len(training_img) + len(testing_img))
+    print("SM angles data size: ", len(training_angles) + len(testing_angles))
+    print("SM Validation amount: ", valid_amount)
 
     max_pic_save = 6
     loss_v_last = np.inf
@@ -88,10 +87,11 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
     rays_o, rays_d = get_rays(height, width, focal)
     print("SM rays: ", rays_o, rays_d)
 
+    chunksize = eval(config.chunkSize)  # Modify as needed to fit in GPU memory
     display_rate = config.displayRate  # int(select_data_amount*tr)  # Display test output every X epochs
-    torch.save(model.state_dict(), LOG_PATH + '/best_model/best_model.pt')  # save one random latent state for Dreamer start, (eze)
+    totalGradientSteps = totalGradientSteps * 10
 
-    for i in trange(display_rate):
+    for i in trange(display_rate, desc=f"SM{totalGradientSteps}"):
         model.train()
 
         target_img_idx = np.random.randint(training_img.shape[0] - 1)
@@ -158,7 +158,7 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
                 np_image = rgb_predicted.reshape([height, width, 1]).detach().cpu().numpy()
                 if v_i < max_pic_save:
                     valid_image.append(np_image)
-                updateData(buffer)
+                training_img, training_angles, testing_angles, testing_img, valid_amount = updateData(buffer)
             loss_valid = np.mean(valid_epoch_loss)
 
             print("SM-Loss:", loss_valid, 'patience', patience)
@@ -233,7 +233,14 @@ def main(config, buffer, totalGradientSteps):
     # data = np.load('data/%s_data/%s_data_robo%d(%s)_cam%d_test.npz'%(sim_real,sim_real,robotid,arm_ee,800)) # 800 test is 1000 ... local data, Jiong
 
     print("DOF, robot_id, PE", DOF, robotid, FLAG_PositionalEncoder)
+
     LOG_PATH = "train_log/%s_id%d_(%d)_%s(%s)_%s" % (sim_real, robotid, seed_num, add_name, arm_ee, config.runName)
+
+    if totalGradientSteps == 0:
+        pretrained_model_pth = LOG_PATH + '/best_model/best_model.pt'
+    else:
+        pretrained_model_pth = LOG_PATH + '/best_model/model_epoch%d.pt'%((totalGradientSteps - config.replayRatio) * 10)
+
     config = config.dreamer.selfModel
     if different_arch != 0:
         LOG_PATH += 'diff_out_%d' % different_arch
@@ -256,7 +263,6 @@ def main(config, buffer, totalGradientSteps):
     # Training
     n_iters = config.nIters  # default = 400000 (eze)
     one_image_per_step = True  # One image per gradient step (disables batching)  # No use again (eze)
-    chunksize = config.chunkSize  # Modify as needed to fit in GPU memory
     center_crop = True  # Crop the center of image (one_image_per_)   # debug
     center_crop_iters = 200  # Stop cropping center after this many epochs
 
@@ -281,7 +287,6 @@ def main(config, buffer, totalGradientSteps):
 
     # pretrained_model_pth = 'train_log/real_train_1_log0928_%ddof_100(0)/best_model/'%num_data
     # pretrained_model_pth = 'train_log/real_id1_10000(1)_PE(arm)/best_model/'
-    pretrained_model_pth = LOG_PATH + '/best_model/model_epoch%d.pt'%totalGradientSteps
 
     for _ in range(n_restarts):
 
@@ -294,10 +299,10 @@ def main(config, buffer, totalGradientSteps):
                                        )
 
         success = train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH,
-                        chunksize, center_crop, center_crop_iters, record_file_train,
+                        center_crop, center_crop_iters, record_file_train,
                         record_file_val, Patience_threshold, buffer, config, totalGradientSteps)
         if success:
-            print('Training successful!')
+            print('SelfModel-Training-step successful!')
             break
 
     print(f'Done!')

@@ -370,6 +370,7 @@ def model_forward(
         output_flag: int = 0
 ):
 
+    return_latents = False
     if output_flag == 4:  # 4 is mode 0 with latent output, (eze)
         output_flag = 0
         return_latents = True
@@ -489,7 +490,7 @@ def forwardSpecs(config, img):
     nf_size = config.selfModel.nfSize
     near, far = cam_dist - nf_size, cam_dist + nf_size  # real scale dist=1.0
     n_samples = config.selfModel.nSamples
-    chunksize = config.selfModel.chunkSize  # Modify as needed to fit in GPU memory
+    chunksize = eval(config.selfModel.chunkSize)  # Modify as needed to fit in GPU memory
 
     return DOF, near, far, n_samples, chunksize, rays_o, rays_d
 
