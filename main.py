@@ -41,6 +41,8 @@ def main(configFile):
     iterationsNum = config.gradientSteps // config.replayRatio
     for _ in tqdm(range(iterationsNum), desc="OverallProgress", colour="green"):
         for _ in tqdm(range(config.replayRatio), desc="Dream", colour="blue"):
+            if (config.dreamer.selfModel.nIters / config.dreamer.selfModel.displayRate) - dreamer.totalGradientSteps >= 0:
+                sm_train.main(config, dreamer.buffer, dreamer.totalGradientSteps)  # initialize SelfModel training, (eze)
             sampledData                         = dreamer.buffer.sample(dreamer.config.batchSize, dreamer.config.batchLength)
             initialStates, worldModelMetrics    = dreamer.worldModelTraining(sampledData)
             behaviorMetrics                     = dreamer.behaviorTraining(initialStates)
@@ -51,9 +53,6 @@ def main(configFile):
                 dreamer.saveCheckpoint(f"{checkpointFilenameBase}_{suffix}")
                 evaluationScore = dreamer.environmentInteraction(envEvaluation, config.numEvaluationEpisodes, seed=config.seed, evaluation=True, saveVideo=True, filename=f"{videoFilenameBase}_{suffix}")
                 print(f"Saved Checkpoint and Video at {suffix:>6} gradient steps. Evaluation score: {evaluationScore:>8.2f}")
-
-        if dreamer.totalGradientSteps - config.startSelfmodel == 0:
-            sm_train.main(config, dreamer.buffer)
 
         mostRecentScore = dreamer.environmentInteraction(env, config.numInteractionEpisodes, seed=config.seed)
         if config.saveMetrics:

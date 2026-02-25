@@ -3,6 +3,7 @@
 import random
 from networks import FBV_SM, PositionalEncoder
 from func import *
+import dreamer
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print("train,", device)
@@ -68,8 +69,8 @@ def updateData(buffer):
     return training_img, training_angles, testing_angles, testing_img, valid_amount
 
 
-def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH, n_iters,
-          chunksize, center_crop, center_crop_iters, display_rate, record_file_train, record_file_val, Patience_threshold, buffer):
+def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH,
+          chunksize, center_crop, center_crop_iters, record_file_train, record_file_val, Patience_threshold, buffer, config, totalGradientSteps):
 
     Camera_FOV = 45.
     camera_angle_y = Camera_FOV * np.pi / 180.
@@ -87,9 +88,10 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
     rays_o, rays_d = get_rays(height, width, focal)
     print("SM rays: ", rays_o, rays_d)
 
+    display_rate = config.displayRate  # int(select_data_amount*tr)  # Display test output every X epochs
     torch.save(model.state_dict(), LOG_PATH + '/best_model/best_model.pt')  # save one random latent state for Dreamer start, (eze)
 
-    for i in trange(n_iters):
+    for i in trange(display_rate):
         model.train()
 
         target_img_idx = np.random.randint(training_img.shape[0] - 1)
@@ -168,11 +170,11 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
             np_image_combine = np.clip(np_image_combine,0,1)
             matplotlib.image.imsave(LOG_PATH + '/image/' + 'latest.png', np_image_combine)
             if Flag_save_image_during_training:
-                matplotlib.image.imsave(LOG_PATH + '/image/' + '%d.png' % i, np_image_combine)
+                matplotlib.image.imsave(LOG_PATH + '/image/' + '%d.png' % totalGradientSteps, np_image_combine)
 
             record_file_train.write(str(loss_train) + "\n")
             record_file_val.write(str(loss_valid) + "\n")
-            torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt'%i)
+            torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt'%totalGradientSteps)
 
             if min_loss > loss_valid:
                 """record the best image and model"""
@@ -196,7 +198,7 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
     return True
 
 
-def main(config, buffer):
+def main(config, buffer, totalGradientSteps):
     print("\n\nSelfmodel-training initialized...\n")
     sim_real = config.dreamer.selfModel.sim_real
     arm_ee = config.dreamer.selfModel.arm_ee
@@ -257,7 +259,6 @@ def main(config, buffer):
     chunksize = config.chunkSize  # Modify as needed to fit in GPU memory
     center_crop = True  # Crop the center of image (one_image_per_)   # debug
     center_crop_iters = 200  # Stop cropping center after this many epochs
-    display_rate = 1000  # int(select_data_amount*tr)  # Display test output every X epochs  # only use in train (eze)
 
     # Early Stopping
     warmup_iters = 400  # Number of iterations during warmup phase  # no use (eze)
@@ -280,6 +281,7 @@ def main(config, buffer):
 
     # pretrained_model_pth = 'train_log/real_train_1_log0928_%ddof_100(0)/best_model/'%num_data
     # pretrained_model_pth = 'train_log/real_id1_10000(1)_PE(arm)/best_model/'
+    pretrained_model_pth = LOG_PATH + '/best_model/model_epoch%d.pt'%totalGradientSteps
 
     for _ in range(n_restarts):
 
@@ -287,13 +289,13 @@ def main(config, buffer):
                                        d_filter=128,
                                        output_size=2,
                                        lr=5e-4,  # 5e-4
-                                       # pretrained_model_pth=pretrained_model_pth,
+                                       pretrained_model_pth=pretrained_model_pth,
                                        FLAG_PositionalEncoder=FLAG_PositionalEncoder
                                        )
 
         success = train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH,
-                        n_iters, chunksize, center_crop, center_crop_iters, display_rate, record_file_train,
-                        record_file_val, Patience_threshold, buffer)
+                        chunksize, center_crop, center_crop_iters, record_file_train,
+                        record_file_val, Patience_threshold, buffer, config, totalGradientSteps)
         if success:
             print('Training successful!')
             break
