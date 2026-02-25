@@ -192,7 +192,7 @@ class Dreamer:
                 recurrentState              = self.recurrentModel(recurrentState, latentState, action)
                 latentState, _              = self.posteriorNet(torch.cat((recurrentState, encodedObservation.view(1, -1)), -1))
                 selfModel = self.selfModel.load_state_dict(torch.load(self.pretrained_selfModel_pth + "best_model.pt", map_location=torch.device(device)))
-                smOutputs, smLatentState    = model_forward(rays_o, rays_d, near, far, selfModel, angles, DOF, chunksize, n_samples, output_flag=0)
+                smOutputs, smLatentState    = model_forward(rays_o, rays_d, near, far, selfModel, angles, DOF, chunksize, n_samples, output_flag=4)
                 print("smOutputs: ", smOutputs, "smLatentState: ", smLatentState)  # debugging, (eze)
 
                 action          = self.actor(torch.cat((recurrentState, latentState), -1))

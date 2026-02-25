@@ -47,12 +47,11 @@ def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_si
     return model, optimizer
 
 
-def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH, n_iters,
-          chunksize, center_crop, center_crop_iters, display_rate, record_file_train, record_file_val, Patience_threshold, training_angles_snapshot, training_imges_snapshot, buffer):
-
-    Camera_FOV = 45.
-    camera_angle_y = Camera_FOV * np.pi / 180.
-    focal = 0.5 * 64 / np.tan(0.5 * camera_angle_y)
+def updateData(buffer):
+    training_imges_snapshot = buffer.getData().nextObservations.clone()
+    training_angles_snapshot = buffer.getData().angles.clone()
+    print("SM img data size: ", len(training_imges_snapshot))
+    print("SM angles data size: ", len(training_angles_snapshot))
 
     tr = 0.8  # training ratio
     buffer_size = buffer.getIndex()
@@ -63,9 +62,20 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
 
     testing_angles = training_angles_snapshot[sample_id[int(buffer_size * tr):]]
     testing_img = training_imges_snapshot[sample_id[int(buffer_size * tr):]]
-    train_amount = len(training_angles)  # no usage (eze)
     valid_amount = len(testing_angles)
     print("SM Validation amount: ", valid_amount)
+
+    return training_img, training_angles, testing_angles, testing_img, valid_amount
+
+
+def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH, n_iters,
+          chunksize, center_crop, center_crop_iters, display_rate, record_file_train, record_file_val, Patience_threshold, buffer):
+
+    Camera_FOV = 45.
+    camera_angle_y = Camera_FOV * np.pi / 180.
+    focal = 0.5 * 64 / np.tan(0.5 * camera_angle_y)
+
+    training_img, training_angles, testing_angles, testing_img, valid_amount = updateData(buffer)  # get first dataSnapshot, (eze)
 
     max_pic_save = 6
     loss_v_last = np.inf
@@ -77,6 +87,8 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
     rays_o, rays_d = get_rays(height, width, focal)
     print("SM rays: ", rays_o, rays_d)
 
+    torch.save(model.state_dict(), LOG_PATH + '/best_model/best_model.pt')  # save one random latent state for Dreamer start, (eze)
+
     for i in trange(n_iters):
         model.train()
 
@@ -84,7 +96,7 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
 
         # Pick an image as the target.
         target_img = training_img[target_img_idx]
-        target_img = target_img.mean(dim=0)  # RGB → grayscale
+        target_img = target_img.mean(dim=0)  # RGB → grayscale, (eze)
         angle = training_angles[target_img_idx]
 
         if center_crop and i < center_crop_iters:
@@ -144,6 +156,7 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
                 np_image = rgb_predicted.reshape([height, width, 1]).detach().cpu().numpy()
                 if v_i < max_pic_save:
                     valid_image.append(np_image)
+                updateData(buffer)
             loss_valid = np.mean(valid_epoch_loss)
 
             print("SM-Loss:", loss_valid, 'patience', patience)
@@ -226,11 +239,6 @@ def main(config, buffer):
     os.makedirs(LOG_PATH + "/image/", exist_ok=True)
     os.makedirs(LOG_PATH + "/best_model/", exist_ok=True)
 
-    training_imges_snapshot = buffer.getData().nextObservations.clone()
-    training_angles_snapshot = buffer.getData().angles.clone()
-    print("SM img data size: ", len(training_imges_snapshot))
-    print("SM angles data size: ", len(training_angles_snapshot))
-
     # Encoders
     """arm dof = 2+3; arm dof=3+3"""
 
@@ -285,7 +293,7 @@ def main(config, buffer):
 
         success = train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH,
                         n_iters, chunksize, center_crop, center_crop_iters, display_rate, record_file_train,
-                        record_file_val, Patience_threshold, training_angles_snapshot, training_imges_snapshot, buffer)
+                        record_file_val, Patience_threshold, buffer)
         if success:
             print('Training successful!')
             break
