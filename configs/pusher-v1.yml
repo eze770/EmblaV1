@@ -95,10 +95,11 @@ dreamer:
         sim_real: 'sim'
         arm_ee: 'ee'
         positionalEncoder: True
+        saveImageDuringTraining: True
         dof: 7
         camDist: 4.0
         nfSize: 0.4
-        saveImageDuringTraining: True
+        d_filter: 128
         nIters: 400000
         displayRate: 1000
         chunkSize: 2 ** 20

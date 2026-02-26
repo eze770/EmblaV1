@@ -258,8 +258,8 @@ def main(config, buffer, totalGradientSteps):
     center_crop_iters = 200  # Stop cropping center after this many epochs
 
     # Early Stopping
-    warmup_iters = 400  # Number of iterations during warmup phase  # no use (eze)
-    warmup_min_fitness = 10.0  # Min val PSNR to continue training at warmup_iters  # no use (eze)
+    warmup_iters = 400  # Number of iterations during warmup phase
+    warmup_min_fitness = 10.0  # Min val PSNR to continue training at warmup_iters
     n_restarts = 1000  # Number of times to restart if training stalls
 
     # We bundle the kwargs for various functions to pass all at once.  # no use (eze)
@@ -282,7 +282,7 @@ def main(config, buffer, totalGradientSteps):
     for _ in range(n_restarts):
 
         model, optimizer = init_models(d_input=(DOF - 2) + 3,  # DOF + 3 -> xyz and angle2 or 3 -> xyz
-                                       d_filter=128,
+                                       d_filter=config.d_filter,
                                        output_size=2,
                                        lr=5e-4,  # 5e-4
                                        pretrained_model_pth=pretrained_model_pth,

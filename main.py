@@ -8,6 +8,7 @@ from dreamer    import Dreamer
 from utils      import loadConfig, seedEverything, plotMetrics
 from envs       import getEnvProperties, GymPixelsProcessingWrapper, CleanGymWrapper
 from utils      import saveLossesToCSV, ensureParentFolders
+from func import selfmodelForward
 import sm_train
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Torch version:", torch.__version__)
@@ -32,7 +33,7 @@ def main(configFile):
     observationShape, actionSize, actionLow, actionHigh = getEnvProperties(env)
     print(f"envProperties: obs {observationShape}, action size {actionSize}, actionLow {actionLow}, actionHigh {actionHigh}")
 
-    dreamer = Dreamer(observationShape, actionSize, actionLow, actionHigh, device, config.dreamer, seed=config.seed, robotid=config.robotID, runName=config.runName)
+    dreamer = Dreamer(observationShape, actionSize, actionLow, actionHigh, device, config.dreamer, config)
     if config.resume:
         dreamer.loadCheckpoint(checkpointToLoad)
 
@@ -45,7 +46,9 @@ def main(configFile):
         for _ in tqdm(range(config.replayRatio), desc="Dream", colour="blue"):
             sampledData                         = dreamer.buffer.sample(dreamer.config.batchSize, dreamer.config.batchLength)
             initialStates, worldModelMetrics    = dreamer.worldModelTraining(sampledData)
-            behaviorMetrics                     = dreamer.behaviorTraining(initialStates)
+            smLatentState                       = selfmodelForward(config=config, )  # seperated training and this step because SM is not dynamic, which means that sampledData would be way less, (eze)
+            fullStates                          = initialStates + smLatentState.mean(dim=0, keepdim=True)
+            behaviorMetrics                     = dreamer.behaviorTraining(fullStates)
             dreamer.totalGradientSteps += 1
 
             if dreamer.totalGradientSteps % config.checkpointInterval == 0 and config.saveCheckpoints:

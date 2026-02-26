@@ -7,6 +7,7 @@ from tqdm import trange
 import torch
 from torch import nn
 from typing import Optional, Tuple, List, Union, Callable
+from sm_train import init_models
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -389,10 +390,12 @@ def model_forward(
         model_input = query_points  # orig version 3 input 2dof, Mar30
     batches = prepare_chunks(model_input, chunksize=chunksize)
     predictions = []
+    latent_states = []
     for batch in batches:
         batch = batch.to(device)
         if return_latents:
             prediction, latent_state = model(batch)
+            latent_states.append(latent_state)
         else:
             prediction = model(batch)
         predictions.append(prediction)
@@ -417,6 +420,7 @@ def model_forward(
 
     # Store outputs.
     if return_latents:
+        latent_state = torch.cat(latent_states, dim=0)
         return outputs, latent_state
     else:
         return outputs
@@ -478,21 +482,46 @@ def plot_3d_visual(x, y, z, if_transform=True):
 # ---------------------------------------------------------
 # calculating specs for SM, (eze)
 # ---------------------------------------------------------
-def forwardSpecs(config, img):
-    Camera_FOV = config.selfModel.cameraFOV
-    height, width = img.shape[1:]
-    camera_angle_y = Camera_FOV * np.pi / 180.
-    focal = 0.5 * height / np.tan(0.5 * camera_angle_y)
+def selfmodelEvalForward(config, img, data, initializeLatents=False):
+    if config.dreamer.selfModel.positionalEncoder:
+        add_name = 'PE'
+    else:
+        add_name = 'no_PE'
+    pretrained_selfModel_pth = "train_log/%s_id%d_(%d)_%s(%s)_%s" % (
+    config.dreamer.selfModel.sim_real, config.robotID, config.seed, add_name, config.dreamer.selfModel.arm_ee,
+    config.runName)
 
-    rays_o, rays_d = get_rays(height, width, focal)
-    DOF = config.selfModel.dof
-    cam_dist = config.selfModel.camDist
-    nf_size = config.selfModel.nfSize
-    near, far = cam_dist - nf_size, cam_dist + nf_size  # real scale dist=1.0
-    n_samples = config.selfModel.nSamples
-    chunksize = eval(config.selfModel.chunkSize)  # Modify as needed to fit in GPU memory
+    model, _ = init_models(d_input=(config.dreamer.selfModel.dof - 2) + 3, d_filter=128,
+                                                   pretrained_model_pth=pretrained_selfModel_pth + "/best_model/best_model.pt",
+                                                   output_size=2,
+                                                   FLAG_PositionalEncoder=config.dreamer.selfModel.positionalEncoder,
+                                                   return_latent=True)  # SelfModel (already on device), (eze)
+    model.eval()
 
-    return DOF, near, far, n_samples, chunksize, rays_o, rays_d
+    if initializeLatents:
+        os.makedirs(pretrained_selfModel_pth + "/best_model/", exist_ok=True)
+        torch.save(model.state_dict(), pretrained_selfModel_pth + '/best_model/best_model.pt')
+    else:
+
+        config = config.dreamer
+
+        Camera_FOV = config.selfModel.cameraFOV
+        height, width = img.shape[1:]
+        camera_angle_y = Camera_FOV * np.pi / 180.
+        focal = 0.5 * height / np.tan(0.5 * camera_angle_y)
+
+        rays_o, rays_d = get_rays(height, width, focal)
+        DOF = config.selfModel.dof
+        cam_dist = config.selfModel.camDist
+        nf_size = config.selfModel.nfSize
+        near, far = cam_dist - nf_size, cam_dist + nf_size  # real scale dist=1.0
+        n_samples = config.selfModel.nSamples
+        chunksize = eval(config.selfModel.chunkSize)  # Modify as needed to fit in GPU memory
+
+        _, smLatentState = model_forward(rays_o, rays_d, near, far, model, data, DOF, chunksize, n_samples, output_flag=4)
+        smLatentState = smLatentState.mean(dim=0, keepdim=True)
+
+        return smLatentState
 
 
 if __name__ == "__main__":

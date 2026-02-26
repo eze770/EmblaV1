@@ -8,27 +8,20 @@ import imageio
 from networks import RecurrentModel, PriorNet, PosteriorNet, RewardModel, ContinueModel, EncoderConv, DecoderConv, Actor, Critic
 from utils import computeLambdaValues, Moments
 from buffer import ReplayBuffer
-from sm_train import init_models
 from func import *
 
 
 class Dreamer:
-    def __init__(self, observationShape, actionSize, actionLow, actionHigh, device, config, seed=None, robotid=1, runName="NoName"):
+    def __init__(self, observationShape, actionSize, actionLow, actionHigh, device, config, configFile):
         self.observationShape   = observationShape
         self.actionSize         = actionSize
         self.config             = config
+        self.configFile         = configFile
         self.device             = device
 
         self.recurrentSize  = config.recurrentSize
         self.latentSize     = config.latentLength*config.latentClasses
-        self.fullStateSize  = config.recurrentSize + self.latentSize
-
-        if self.config.selfModel.positionalEncoder:
-            add_name = 'PE'
-        else:
-            add_name = 'no_PE'
-        self.pretrained_selfModel_pth = "train_log/%s_id%d_(%d)_%s(%s)_%s" % (self.config.selfModel.sim_real, robotid, seed, add_name, self.config.selfModel.arm_ee, runName)  # remove later when implementing sm_train into dreamer.py, (eze)
-        os.makedirs(self.pretrained_selfModel_pth + "/best_model/", exist_ok=True)
+        self.fullStateSize  = config.recurrentSize + self.latentSize + config.selfModel.d_filter // 4
 
         self.actor                             = Actor(self.fullStateSize, actionSize, actionLow, actionHigh, device,                                  config.actor          ).to(self.device)
         self.critic                            = Critic(self.fullStateSize,                                                                            config.critic         ).to(self.device)
@@ -38,10 +31,9 @@ class Dreamer:
         self.priorNet                          = PriorNet(config.recurrentSize, config.latentLength, config.latentClasses,                             config.priorNet       ).to(self.device)
         self.posteriorNet                      = PosteriorNet(config.recurrentSize + config.encodedObsSize, config.latentLength, config.latentClasses, config.posteriorNet   ).to(self.device)
         self.rewardPredictor                   = RewardModel(self.fullStateSize,                                                                       config.reward         ).to(self.device)
-        self.selfModel, self.smOptimizer       = init_models(d_input=(config.selfModel.dof - 2) + 3, d_filter=128, pretrained_model_pth=self.pretrained_selfModel_pth + "/best_model/best_model.pt", output_size=2, FLAG_PositionalEncoder=config.selfModel.positionalEncoder, return_latent=True)  # SelfModel (already on device), (eze)
 
         if config.useContinuationPrediction:
-            self.continuePredictor  = ContinueModel(self.fullStateSize,                                                              config.continuation   ).to(self.device)
+            self.continuePredictor  = ContinueModel(self.fullStateSize,                                                                                config.continuation   ).to(self.device)
 
         self.buffer         = ReplayBuffer(observationShape, actionSize, config.buffer, device)
         self.valueMoments   = Moments(device)
@@ -59,7 +51,7 @@ class Dreamer:
         self.totalEnvSteps      = 0
         self.totalGradientSteps = 0
 
-        torch.save(self.selfModel.state_dict(), self.pretrained_selfModel_pth + '/best_model/best_model.pt')  # save one random latent state for Dreamer start, (eze)
+        selfmodelEvalForward(config=configFile, initializeLatents=True)  # save one random latent state for Dreamer start, (eze)
 
 
     def worldModelTraining(self, data):
@@ -188,18 +180,15 @@ class Dreamer:
             observation = env.reset(seed= (seed + self.totalEpisodes if seed else None))
             encodedObservation = self.encoder(torch.from_numpy(observation).float().unsqueeze(0).to(self.device))
             angles = torch.as_tensor(env.unwrapped.data.qpos.copy()[:7], device=torch.device("cpu"), dtype=torch.float32)
-            DOF, near, far, n_samples, chunksize, rays_o, rays_d = forwardSpecs(config=self.config, img=observation)
 
             currentScore, stepCount, done, frames = 0, 0, False, []
             while not done:
                 recurrentState              = self.recurrentModel(recurrentState, latentState, action)
                 latentState, _              = self.posteriorNet(torch.cat((recurrentState, encodedObservation.view(1, -1)), -1))
-                selfModel = self.selfModel
-                selfModel.eval()
-                smOutputs, smLatentState    = model_forward(rays_o, rays_d, near, far, selfModel, angles, DOF, chunksize, n_samples, output_flag=4)
-                #print("smOutputs: ", smOutputs, "smLatentState: ", smLatentState)  # debugging, (eze)
+                smLatentState               = selfmodelEvalForward(config=self.configFile, img=observation, data=angles)
+                #print("smLatentStateSize: ", smLatentState.size(), "recurrentStateSize: ", recurrentState.size(), "latentStateSize: ", latentState.size())  # debugging, (eze)
 
-                action          = self.actor(torch.cat((recurrentState, latentState), -1))
+                action          = self.actor(torch.cat((recurrentState, latentState, smLatentState), -1))
                 actionNumpy     = action.cpu().numpy().reshape(-1)
 
                 nextObservation, reward, done = env.step(actionNumpy)
