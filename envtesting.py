@@ -31,9 +31,15 @@ while not terminated and not truncated:
     obs, reward, terminated, truncated, info = env.step(action)
     observations[idx] = obs
     qpos = env.unwrapped.data.qpos.copy()[:7]
+    qvel = env.unwrapped.data.qvel.copy()
     idx = idx + 1
 
-print(qpos)
+    timestep = env.unwrapped.model.opt.timestep
+    frame_skip = env.unwrapped.frame_skip
+
+    dt = timestep * frame_skip
+
+print("qpos: ", qpos, "qvel: ", qvel, "dt: ", dt)
 #observations = torch.as_tensor(observations[1], device=device).float()
 #training_imges_snapshot = observations.view(-1, *observationShape)
 #print(training_imges_snapshot)

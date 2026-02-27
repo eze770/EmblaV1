@@ -15,6 +15,7 @@ class ReplayBuffer(object):
         self.rewards             = np.empty((self.capacity, 1), dtype=np.float32)
         self.dones               = np.empty((self.capacity, 1), dtype=np.float32)
         self.angles              = np.empty((self.capacity, actions_size), dtype=np.float32)  # actions_size is equivalent to number of angles (eze)
+        self.vel                 = np.empty((self.capacity, actions_size), dtype=np.float32)
 
         self.bufferIndex = 0
         self.full = False
@@ -22,13 +23,14 @@ class ReplayBuffer(object):
     def __len__(self):
         return self.capacity if self.full else self.bufferIndex
 
-    def add(self, observation, action, reward, nextObservation, done, angle):
+    def add(self, observation, action, reward, nextObservation, done, angle, vel):
         self.observations[self.bufferIndex]     = observation
         self.actions[self.bufferIndex]          = action
         self.rewards[self.bufferIndex]          = reward
         self.nextObservations[self.bufferIndex] = nextObservation
         self.dones[self.bufferIndex]            = done
         self.angles[self.bufferIndex]           = angle
+        self.vel[self.bufferIndex]              = vel
 
         self.bufferIndex = (self.bufferIndex + 1) % self.capacity
         self.full = self.full or self.bufferIndex == 0
@@ -47,13 +49,17 @@ class ReplayBuffer(object):
         actions  = torch.as_tensor(self.actions[sampleIndex], device=self.device)
         rewards  = torch.as_tensor(self.rewards[sampleIndex], device=self.device)
         dones    = torch.as_tensor(self.dones[sampleIndex], device=self.device)
+        angles   = torch.as_tensor(self.angles[sampleIndex], device=torch.device("cpu"))
+        vel      = torch.as_tensor(self.vel[sampleIndex], device=torch.device("cpu"))  # May be redundant in later versions with SM rollouts, (eze)
 
         sample = attridict({
             "observations"      : observations,
             "actions"           : actions,
             "rewards"           : rewards,
             "nextObservations"  : nextObservations,
-            "dones"             : dones})
+            "dones"             : dones,
+            "angles"            : angles,
+            "vel"               : vel})
         return sample
 
 

@@ -7,7 +7,11 @@ def getEnvProperties(env):
     actionSize = env.action_space.shape[0]
     actionLow = env.action_space.low.tolist()
     actionHigh = env.action_space.high.tolist()
-    return observationShape, actionSize, actionLow, actionHigh
+
+    timestep = env.unwrapped.model.opt.timestep
+    frame_skip = env.unwrapped.frame_skip
+    dt = timestep * frame_skip
+    return observationShape, actionSize, actionLow, actionHigh, dt
 
 class GymPixelsProcessingWrapper(gym.ObservationWrapper):
     def __init__(self, env):

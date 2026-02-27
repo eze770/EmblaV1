@@ -8,7 +8,7 @@ from dreamer    import Dreamer
 from utils      import loadConfig, seedEverything, plotMetrics
 from envs       import getEnvProperties, GymPixelsProcessingWrapper, CleanGymWrapper
 from utils      import saveLossesToCSV, ensureParentFolders
-from func import selfmodelForward
+from func import selfmodelEvalForward
 import sm_train
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Torch version:", torch.__version__)
@@ -30,10 +30,10 @@ def main(configFile):
     env             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=200), render_only=True), (64, 64))))
     envEvaluation   = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=200), render_only=True), (64, 64))))
     
-    observationShape, actionSize, actionLow, actionHigh = getEnvProperties(env)
-    print(f"envProperties: obs {observationShape}, action size {actionSize}, actionLow {actionLow}, actionHigh {actionHigh}")
+    observationShape, actionSize, actionLow, actionHigh, dt = getEnvProperties(env)
+    print(f"envProperties: obs {observationShape}, action size {actionSize}, actionLow {actionLow}, actionHigh {actionHigh}, dt {dt}")
 
-    dreamer = Dreamer(observationShape, actionSize, actionLow, actionHigh, device, config.dreamer, config)
+    dreamer = Dreamer(observationShape, actionSize, actionLow, actionHigh, dt, device, config.dreamer, config)
     if config.resume:
         dreamer.loadCheckpoint(checkpointToLoad)
 
@@ -45,10 +45,12 @@ def main(configFile):
             sm_train.main(config, dreamer.buffer, dreamer.totalGradientSteps)  # initialize SelfModel training, (eze)
         for _ in tqdm(range(config.replayRatio), desc="Dream", colour="blue"):
             sampledData                         = dreamer.buffer.sample(dreamer.config.batchSize, dreamer.config.batchLength)
-            initialStates, worldModelMetrics    = dreamer.worldModelTraining(sampledData)
-            smLatentState                       = selfmodelForward(config=config, )  # seperated training and this step because SM is not dynamic, which means that sampledData would be way less, (eze)
-            fullStates                          = initialStates + smLatentState.mean(dim=0, keepdim=True)
-            behaviorMetrics                     = dreamer.behaviorTraining(fullStates)
+            smLatentStates = []
+            for t in range(1, config.dreamer.batchLength):
+                for data in sampledData.angles[:, t]:
+                    smLatentStates.append(selfmodelEvalForward(config=config, observationShape=observationShape, data=data))  # separated training and this step because SM is not dynamic, which means that sampledData would be way less, (eze)
+            initialStates, worldModelMetrics    = dreamer.worldModelTraining(sampledData, smLatentStates)  # initial states also contains SM Latents (used for continuationpredictor), (eze)
+            behaviorMetrics                     = dreamer.behaviorTraining(initialStates, sampledData.angles, sampledData.vel)
             dreamer.totalGradientSteps += 1
 
             if dreamer.totalGradientSteps % config.checkpointInterval == 0 and config.saveCheckpoints:

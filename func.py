@@ -7,7 +7,7 @@ from tqdm import trange
 import torch
 from torch import nn
 from typing import Optional, Tuple, List, Union, Callable
-from sm_train import init_models
+from networks import FBV_SM, PositionalEncoder
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -480,9 +480,36 @@ def plot_3d_visual(x, y, z, if_transform=True):
 
 
 # ---------------------------------------------------------
-# calculating specs for SM, (eze)
+# SM stuff, (eze)
 # ---------------------------------------------------------
-def selfmodelEvalForward(config, img, data, initializeLatents=False):
+def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_size=2, FLAG_PositionalEncoder = False, return_latent=False):
+
+    if FLAG_PositionalEncoder:
+        encoder = PositionalEncoder(d_input, n_freqs=10, log_space=True)
+
+        model = FBV_SM(encoder = encoder,
+                       d_input=d_input,
+                       d_filter=d_filter,
+                       output_size=output_size,
+                       return_latent=return_latent)
+
+    else:
+        # Models
+        model = FBV_SM(d_input=d_input,
+                       d_filter=d_filter,
+                       output_size=output_size,
+                       return_latent=return_latent)
+    model.to(device)
+    # Pretrained Model
+    if pretrained_model_pth != None:
+        model.load_state_dict(torch.load(pretrained_model_pth, map_location=torch.device(device)))
+    # Optimizer
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    return model, optimizer
+
+
+def selfmodelEvalForward(config, observationShape, data, initializeLatents=False):  # data is only angles, (eze)
     if config.dreamer.selfModel.positionalEncoder:
         add_name = 'PE'
     else:
@@ -506,7 +533,7 @@ def selfmodelEvalForward(config, img, data, initializeLatents=False):
         config = config.dreamer
 
         Camera_FOV = config.selfModel.cameraFOV
-        height, width = img.shape[1:]
+        height, width = observationShape[0], observationShape[1]
         camera_angle_y = Camera_FOV * np.pi / 180.
         focal = 0.5 * height / np.tan(0.5 * camera_angle_y)
 

@@ -14,7 +14,7 @@ Extending DreamerV3 for robotic application and better Morphologieawareness by i
 
 ## Current state
 
-runs but Selfmodel is not affecting Actor yet. Also no Filter for SM inputs
+DO NOT RUN!!! (will most likely crash your hardware)
 
 ## Acknowledgements
 

@@ -12,25 +12,28 @@ from func import *
 
 
 class Dreamer:
-    def __init__(self, observationShape, actionSize, actionLow, actionHigh, device, config, configFile):
+    def __init__(self, observationShape, actionSize, actionLow, actionHigh, dt, device, config, configFile):
         self.observationShape   = observationShape
         self.actionSize         = actionSize
+        self.dt                 = dt
         self.config             = config
         self.configFile         = configFile
         self.device             = device
 
         self.recurrentSize  = config.recurrentSize
         self.latentSize     = config.latentLength*config.latentClasses
-        self.fullStateSize  = config.recurrentSize + self.latentSize + config.selfModel.d_filter // 4
+        self.smLatentSize   = config.selfModel.d_filter // 4
+        self.fullStateSize  = config.recurrentSize + self.latentSize + self.smLatentSize
+        self.wmFullStateSize = config.recurrentSize + self.latentSize
 
         self.actor                             = Actor(self.fullStateSize, actionSize, actionLow, actionHigh, device,                                  config.actor          ).to(self.device)
         self.critic                            = Critic(self.fullStateSize,                                                                            config.critic         ).to(self.device)
         self.encoder                           = EncoderConv(observationShape, self.config.encodedObsSize,                                             config.encoder        ).to(self.device)
-        self.decoder                           = DecoderConv(self.fullStateSize, observationShape,                                                     config.decoder        ).to(self.device)
+        self.decoder                           = DecoderConv(self.wmFullStateSize, observationShape,                                                     config.decoder        ).to(self.device)
         self.recurrentModel                    = RecurrentModel(config.recurrentSize, self.latentSize, actionSize,                                     config.recurrentModel ).to(self.device)
         self.priorNet                          = PriorNet(config.recurrentSize, config.latentLength, config.latentClasses,                             config.priorNet       ).to(self.device)
         self.posteriorNet                      = PosteriorNet(config.recurrentSize + config.encodedObsSize, config.latentLength, config.latentClasses, config.posteriorNet   ).to(self.device)
-        self.rewardPredictor                   = RewardModel(self.fullStateSize,                                                                       config.reward         ).to(self.device)
+        self.rewardPredictor                   = RewardModel(self.wmFullStateSize,                                                                       config.reward         ).to(self.device)
 
         if config.useContinuationPrediction:
             self.continuePredictor  = ContinueModel(self.fullStateSize,                                                                                config.continuation   ).to(self.device)
@@ -51,10 +54,10 @@ class Dreamer:
         self.totalEnvSteps      = 0
         self.totalGradientSteps = 0
 
-        selfmodelEvalForward(config=configFile, initializeLatents=True)  # save one random latent state for Dreamer start, (eze)
+        selfmodelEvalForward(config=configFile, observationShape=observationShape, data=torch.as_tensor([0, 0, 0, 0, 0, 0, 0]), initializeLatents=True)  # save one random latent state for Dreamer start, (eze)
 
 
-    def worldModelTraining(self, data):
+    def worldModelTraining(self, data, smLatentStates):
         encodedObservations = self.encoder(data.observations.view(-1, *self.observationShape)).view(self.config.batchSize, self.config.batchLength, -1)
         previousRecurrentState  = torch.zeros(self.config.batchSize, self.recurrentSize,    device=self.device)
         previousLatentState     = torch.zeros(self.config.batchSize, self.latentSize,       device=self.device)
@@ -77,9 +80,12 @@ class Dreamer:
         priorsLogits                = torch.stack(priorsLogits,                 dim=1) # (batchSize, batchLength-1, latentLength, latentClasses)
         posteriors                  = torch.stack(posteriors,                   dim=1) # (batchSize, batchLength-1, latentLength*latentClasses)
         posteriorsLogits            = torch.stack(posteriorsLogits,             dim=1) # (batchSize, batchLength-1, latentLength, latentClasses)
+        smLatentStates              = torch.stack(smLatentStates,               dim=1)
         fullStates                  = torch.cat((recurrentStates, posteriors), dim=-1) # (batchSize, batchLength-1, recurrentSize + latentLength*latentClasses)
 
-        reconstructionMeans        =  self.decoder(fullStates.view(-1, self.fullStateSize)).view(self.config.batchSize, self.config.batchLength-1, *self.observationShape)
+        print("smLatent shape: ", smLatentStates.shape)
+
+        reconstructionMeans        =  self.decoder(fullStates.view(-1, self.wmFullStateSize)).view(self.config.batchSize, self.config.batchLength-1, *self.observationShape)
         reconstructionDistribution =  Independent(Normal(reconstructionMeans, 1), len(self.observationShape))
         reconstructionLoss         = -reconstructionDistribution.log_prob(data.observations[:, 1:]).mean()
 
@@ -99,7 +105,9 @@ class Dreamer:
         posteriorLoss   = self.config.betaPosterior*torch.maximum(posteriorLoss, freeNats)
         klLoss          = (priorLoss + posteriorLoss).mean()
 
-        worldModelLoss =  reconstructionLoss + rewardLoss + klLoss # I think that the reconstruction loss is relatively a bit too high (11k) 
+        worldModelLoss =  reconstructionLoss + rewardLoss + klLoss # I think that the reconstruction loss is relatively a bit too high (11k)
+
+        fullStates = torch.cat((fullStates, smLatentStates), dim=-1)
         
         if self.config.useContinuationPrediction:
             continueDistribution = self.continuePredictor(fullStates)
@@ -117,22 +125,35 @@ class Dreamer:
             "reconstructionLoss"    : reconstructionLoss.item(),
             "rewardPredictorLoss"   : rewardLoss.item(),
             "klLoss"                : klLoss.item() - klLossShiftForGraphing}
+        print("fullStates shape:", fullStates.shape)
+        print("fullStateSize:", self.fullStateSize)
+        print("total elements:", fullStates.numel())
+
         return fullStates.view(-1, self.fullStateSize).detach(), metrics
 
 
 
-    def behaviorTraining(self, fullState):
-        recurrentState, latentState = torch.split(fullState, (self.recurrentSize, self.latentSize), -1)
+    def behaviorTraining(self, fullState, angles, vel):
+        recurrentState, latentState, smLatentState = torch.split(fullState, (self.recurrentSize, self.latentSize, self.smLatentSize), -1)
         fullStates, logprobs, entropies = [], [], []
         for _ in range(self.config.imaginationHorizon):
             action, logprob, entropy = self.actor(fullState.detach(), training=True)
             recurrentState = self.recurrentModel(recurrentState, latentState, action)
             latentState, _ = self.priorNet(recurrentState)
+            smLatentState  = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles)
 
-            fullState = torch.cat((recurrentState, latentState), -1)
+            fullState = torch.cat((recurrentState, latentState, smLatentState), -1)
             fullStates.append(fullState)
             logprobs.append(logprob)
             entropies.append(entropy)
+            print("range angles: ", range(angles))
+            for i in range(angles[:, 0]):
+                for j in range(angles[0, :]):
+                    vel[i, j] += (action[i, j] - 0.1) * self.dt  # 0.1 as simulated friction, (eze)
+                    angles[i, j] += vel[i, j] * self.dt
+            #angles = torch.clamp(angles, -np.pi, np.pi)  # for real Robot, (eze)
+            vel = torch.clamp(vel, -5.0, 5.0)
+
         fullStates  = torch.stack(fullStates,    dim=1) # (batchSize*batchLength, imaginationHorizon, recurrentSize + latentLength*latentClasses)
         logprobs    = torch.stack(logprobs[1:],  dim=1) # (batchSize*batchLength, imaginationHorizon-1)
         entropies   = torch.stack(entropies[1:], dim=1) # (batchSize*batchLength, imaginationHorizon-1)
@@ -185,7 +206,7 @@ class Dreamer:
             while not done:
                 recurrentState              = self.recurrentModel(recurrentState, latentState, action)
                 latentState, _              = self.posteriorNet(torch.cat((recurrentState, encodedObservation.view(1, -1)), -1))
-                smLatentState               = selfmodelEvalForward(config=self.configFile, img=observation, data=angles)
+                smLatentState               = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles)
                 #print("smLatentStateSize: ", smLatentState.size(), "recurrentStateSize: ", recurrentState.size(), "latentStateSize: ", latentState.size())  # debugging, (eze)
 
                 action          = self.actor(torch.cat((recurrentState, latentState, smLatentState), -1))
@@ -193,8 +214,9 @@ class Dreamer:
 
                 nextObservation, reward, done = env.step(actionNumpy)
                 angles = torch.as_tensor(env.unwrapped.data.qpos.copy()[:7], device=torch.device("cpu"), dtype=torch.float32)  # qpos from documentation, (eze)
+                vel = torch.as_tensor(env.unwrapped.data.qvel.copy()[:7], device=torch.device("cpu"), dtype=torch.float32)  # only used in Dreams, (eze)
                 if not evaluation:
-                    self.buffer.add(observation, actionNumpy, reward, nextObservation, done, angles)
+                    self.buffer.add(observation, actionNumpy, reward, nextObservation, done, angles, vel)
 
                 if saveVideo and i == 0:
                     frame = env.render()
