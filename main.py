@@ -41,14 +41,16 @@ def main(configFile):
 
     iterationsNum = config.gradientSteps // config.replayRatio
     for _ in tqdm(range(iterationsNum), desc="OverallProgress", colour="green"):
-        if (config.dreamer.selfModel.nIters / config.dreamer.selfModel.displayRate) - dreamer.totalGradientSteps >= 0:
-            sm_train.main(config, dreamer.buffer, dreamer.totalGradientSteps)  # initialize SelfModel training, (eze)
         for _ in tqdm(range(config.replayRatio), desc="Dream", colour="blue"):
             sampledData                         = dreamer.buffer.sample(dreamer.config.batchSize, dreamer.config.batchLength)
-            smLatentStates = []
-            for t in range(1, config.dreamer.batchLength):
-                for data in sampledData.angles[:, t]:
-                    smLatentStates.append(selfmodelEvalForward(config=config, observationShape=observationShape, data=data))  # separated training and this step because SM is not dynamic, which means that sampledData would be way less, (eze)
+            if (config.dreamer.selfModel.nIters / config.dreamer.batchLength * config.dreamer.batchSize) - dreamer.totalGradientSteps >= 0:
+                smLatentStates = sm_train.main(config, sampledData, dreamer.totalGradientSteps)  # initialize SelfModel training, (eze)
+            else:
+                smLatentStates = torch.zeros(config.dreamer.batchSize, config.dreamer.batchLength-1, config.dreamer.selfModel.d_filter // 4, device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
+                for t in range(1, config.dreamer.batchLength):
+                    for b in range(len(sampledData.angles[:, t])):
+                        smLatentStates[b, t] = selfmodelEvalForward(config=config, observationShape=observationShape, data=sampledData.angles[b, t])  # separated training and this step because SM is not dynamic, which means that sampledData would be way less, (eze)
+                smLatentState = torch.stack(smLatentState, dim=1)
             initialStates, worldModelMetrics    = dreamer.worldModelTraining(sampledData, smLatentStates)  # initial states also contains SM Latents (used for continuationpredictor), (eze)
             behaviorMetrics                     = dreamer.behaviorTraining(initialStates, sampledData.angles, sampledData.vel)
             dreamer.totalGradientSteps += 1

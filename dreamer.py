@@ -80,10 +80,7 @@ class Dreamer:
         priorsLogits                = torch.stack(priorsLogits,                 dim=1) # (batchSize, batchLength-1, latentLength, latentClasses)
         posteriors                  = torch.stack(posteriors,                   dim=1) # (batchSize, batchLength-1, latentLength*latentClasses)
         posteriorsLogits            = torch.stack(posteriorsLogits,             dim=1) # (batchSize, batchLength-1, latentLength, latentClasses)
-        smLatentStates              = torch.stack(smLatentStates,               dim=1)
         fullStates                  = torch.cat((recurrentStates, posteriors), dim=-1) # (batchSize, batchLength-1, recurrentSize + latentLength*latentClasses)
-
-        print("smLatent shape: ", smLatentStates.shape)
 
         reconstructionMeans        =  self.decoder(fullStates.view(-1, self.wmFullStateSize)).view(self.config.batchSize, self.config.batchLength-1, *self.observationShape)
         reconstructionDistribution =  Independent(Normal(reconstructionMeans, 1), len(self.observationShape))
@@ -105,7 +102,10 @@ class Dreamer:
         posteriorLoss   = self.config.betaPosterior*torch.maximum(posteriorLoss, freeNats)
         klLoss          = (priorLoss + posteriorLoss).mean()
 
-        worldModelLoss =  reconstructionLoss + rewardLoss + klLoss # I think that the reconstruction loss is relatively a bit too high (11k)
+        worldModelLoss =  reconstructionLoss + rewardLoss + klLoss # I think that the reconstruction loss is relatively a bit too high (11k)s
+
+        print("smLatentStateShape: ", smLatentStates.shape)
+        print("Last SM latent: ", smLatentStates[:, 62, :])
 
         fullStates = torch.cat((fullStates, smLatentStates), dim=-1)
         
@@ -125,9 +125,6 @@ class Dreamer:
             "reconstructionLoss"    : reconstructionLoss.item(),
             "rewardPredictorLoss"   : rewardLoss.item(),
             "klLoss"                : klLoss.item() - klLossShiftForGraphing}
-        print("fullStates shape:", fullStates.shape)
-        print("fullStateSize:", self.fullStateSize)
-        print("total elements:", fullStates.numel())
 
         return fullStates.view(-1, self.fullStateSize).detach(), metrics
 

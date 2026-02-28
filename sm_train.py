@@ -19,158 +19,161 @@ def crop_center(
     return img[h_offset:-h_offset, w_offset:-w_offset]
 
 
-def updateData(buffer):
-    training_imges_snapshot = buffer.getData().nextObservations.clone()
-    training_angles_snapshot = buffer.getData().angles.clone()
-
-    tr = 0.8  # training ratio
-    buffer_size = buffer.getIndex()
-    sample_id = random.sample(range(buffer_size), buffer_size)
-
-    training_img = training_imges_snapshot[sample_id[:int(buffer_size * tr)]]
-    training_angles = training_angles_snapshot[sample_id[:int(buffer_size * tr)]]
-
-    testing_angles = training_angles_snapshot[sample_id[int(buffer_size * tr):]]
-    testing_img = training_imges_snapshot[sample_id[int(buffer_size * tr):]]
-    valid_amount = len(testing_angles)
-
-    return training_img, training_angles, testing_angles, testing_img, valid_amount
-
-
 def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH,
-          center_crop, center_crop_iters, record_file_train, record_file_val, Patience_threshold, buffer, config, totalGradientSteps):
+          center_crop, center_crop_iters, record_file_train, record_file_val, Patience_threshold, data, config, totalGradientSteps):
 
     Camera_FOV = 45.
     camera_angle_y = Camera_FOV * np.pi / 180.
     focal = 0.5 * 64 / np.tan(0.5 * camera_angle_y)
+    tr = 0.8  # training ratio
+    batchLength = config.batchLength
+    batchSize = config.batchSize
+    train_amount = int(batchLength * tr)
 
-    training_img, training_angles, testing_angles, testing_img, valid_amount = updateData(buffer)  # get first dataSnapshot, (eze)
-    print("SM img data size: ", len(training_img) + len(testing_img))
-    print("SM angles data size: ", len(training_angles) + len(testing_angles))
-    print("SM Validation amount: ", valid_amount)
+    training_imges_snapshot = data.nextObservations.clone()
+    training_angles_snapshot = data.angles.clone()
+
+    training_img = training_imges_snapshot[:, :train_amount]
+    training_angles = training_angles_snapshot[:, :train_amount]
+
+    testing_angles = training_angles_snapshot[:, train_amount:]
+    testing_img = training_imges_snapshot[:, train_amount:]
+
+    print("SM img data size: ", train_amount * batchSize)
+    print("SM angles data size: ", train_amount * batchSize)
+    print("SM Validation amount: ", int(batchLength * 0.2 * batchSize))
 
     max_pic_save = 6
     loss_v_last = np.inf
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=20, verbose=True)
     patience = 0
     min_loss = np.inf
-    height, width = training_img[0].shape[1:]
+    height, width = training_img[0, 0].shape[1:]
     print("SM height, width: ", height, width)
     rays_o, rays_d = get_rays(height, width, focal)
     print("SM rays: ", rays_o, rays_d)
 
-    chunksize = eval(config.chunkSize)  # Modify as needed to fit in GPU memory
-    display_rate = config.displayRate  # int(select_data_amount*tr)  # Display test output every X epochs
+    chunksize = eval(config.selfModel.chunkSize)  # Modify as needed to fit in GPU memory
+    display_rate = config.selfModel.displayRate  # int(select_data_amount*tr)  # Display test output every X epochs
     totalGradientSteps = totalGradientSteps * 10
+    latents = torch.zeros(batchSize, batchLength-1, config.selfModel.d_filter//4, device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
+    counter = 0
 
-    for i in trange(display_rate, desc=f"SM{totalGradientSteps}"):
-        model.train()
+    for t in trange(1, train_amount):
+        for b in range(len(training_angles_snapshot[:, t])):
+            model.train()
 
-        target_img_idx = np.random.randint(training_img.shape[0] - 1)
+            target_img_idx_x = np.random.randint(training_img.shape[0] - 1)
+            target_img_idx_y = np.random.randint(training_img.shape[1] - 1)
 
-        # Pick an image as the target.
-        target_img = training_img[target_img_idx]
-        target_img = target_img.mean(dim=0)  # RGB → grayscale, (eze)
-        angle = training_angles[target_img_idx]
+            # Pick an image as the target.
+            target_img = training_img[target_img_idx_x, target_img_idx_y]
+            target_img = target_img.mean(dim=0)  # RGB → grayscale, (eze)
+            angle = training_angles[target_img_idx_x, target_img_idx_y]
 
-        if center_crop and i < center_crop_iters:
-            target_img = crop_center(target_img)
-            rays_o_train, rays_d_train = get_rays(int(height*0.5), int(width*0.5), focal)
-        else:
-            rays_o_train,rays_d_train = rays_o, rays_d
-
-        target_img = target_img.reshape([-1])
-
-        # Run one iteration of TinyNeRF and get the rendered RGB image.
-        outputs = model_forward(rays_o_train, rays_d_train,
-                               near, far, model,
-                               chunksize=chunksize,
-                               arm_angle=angle,
-                               DOF=DOF,
-                               output_flag= different_arch)
-
-        # Backprop!
-        rgb_predicted = outputs['rgb_map']
-        optimizer.zero_grad()
-        target_img = target_img.to(device)
-        loss = torch.nn.functional.mse_loss(rgb_predicted, target_img)
-        loss.backward()
-        optimizer.step()
-        loss_train = loss.item()
-
-        # Evaluate testing at given display rate.
-        if i % display_rate == 0:
-            model.eval()
-            torch.no_grad()
-            valid_epoch_loss = []
-            valid_psnr = []
-            valid_image = []
-
-            for v_i in range(valid_amount):  # valid_amount is for how much testingdata there is (faktor 0.8) (eze)
-                angle = testing_angles[v_i]
-                img_label = testing_img[v_i]
-                img_label = img_label.mean(dim=0)
-
-                # Run one iteration of TinyNeRF and get the rendered RGB image.
-                outputs = model_forward(rays_o, rays_d,
-                                       near, far, model,
-                                       chunksize=chunksize,
-                                       arm_angle=angle,
-                                       DOF=DOF,
-                                       output_flag= different_arch)
-
-                rgb_predicted = outputs['rgb_map']
-
-                img_label_tensor = img_label.reshape(-1).to(device)
-
-                v_loss = torch.nn.functional.mse_loss(rgb_predicted, img_label_tensor)
-
-                valid_epoch_loss.append(v_loss.item())
-
-                np_image = rgb_predicted.reshape([height, width, 1]).detach().cpu().numpy()
-                if v_i < max_pic_save:
-                    valid_image.append(np_image)
-                training_img, training_angles, testing_angles, testing_img, valid_amount = updateData(buffer)
-            loss_valid = np.mean(valid_epoch_loss)
-
-            print("SM-Loss:", loss_valid, 'patience', patience)
-            scheduler.step(loss_valid)
-
-            # save test image
-            np_image_combine = np.hstack(valid_image)
-            np_image_combine = np.dstack((np_image_combine, np_image_combine, np_image_combine))
-            np_image_combine = np.clip(np_image_combine,0,1)
-            matplotlib.image.imsave(LOG_PATH + '/image/' + 'latest.png', np_image_combine)
-            if Flag_save_image_during_training:
-                matplotlib.image.imsave(LOG_PATH + '/image/' + '%d.png' % totalGradientSteps, np_image_combine)
-
-            record_file_train.write(str(loss_train) + "\n")
-            record_file_val.write(str(loss_valid) + "\n")
-            torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt'%totalGradientSteps)
-
-            if min_loss > loss_valid:
-                """record the best image and model"""
-                min_loss = loss_valid
-                matplotlib.image.imsave(LOG_PATH + '/image/' + 'best.png', np_image_combine)
-                torch.save(model.state_dict(), LOG_PATH + '/best_model/best_model.pt')
-                patience = 0
-            elif loss_valid == loss_v_last:
-                print("restart")
-                return False
+            if center_crop and b*t < center_crop_iters:
+                target_img = crop_center(target_img)
+                rays_o_train, rays_d_train = get_rays(int(height*0.5), int(width*0.5), focal)
             else:
-                patience += 1
-            loss_v_last = loss_valid
-            # os.makedirs(LOG_PATH + "epoch_%d_model" % i, exist_ok=True)
-            # torch.save(model.state_dict(), LOG_PATH + 'epoch_%d_model/nerf.pt' % i)
+                rays_o_train,rays_d_train = rays_o, rays_d
 
-        if patience > Patience_threshold:
-            break
+            target_img = target_img.reshape([-1])
 
-        # torch.cuda.empty_cache()    # to save memory
-    return True
+            # Run one iteration of TinyNeRF and get the rendered RGB image.
+            outputs, latent = model_forward(rays_o_train, rays_d_train,
+                                   near, far, model,
+                                   chunksize=chunksize,
+                                   arm_angle=angle,
+                                   DOF=DOF,
+                                   output_flag= different_arch)
+            latent = latent.mean(dim=0, keepdim=True).detach()
+            latents[b, t] = latent
+
+            # Backprop!
+            rgb_predicted = outputs['rgb_map']
+            optimizer.zero_grad()
+            target_img = target_img.to(device)
+            loss = torch.nn.functional.mse_loss(rgb_predicted, target_img)
+            loss.backward()
+            optimizer.step()
+            loss_train = loss.item()
+
+            # Evaluate testing at given display rate.
+            if counter % display_rate == 0:
+                model.eval()
+                torch.no_grad()
+                valid_epoch_loss = []
+                valid_psnr = []
+                valid_image = []
+
+                for j in range(int(config.batchLength * 0.2)):
+                    for v_i in range(batchSize):
+                        angle = testing_angles[v_i, j]
+                        img_label = testing_img[v_i, j]
+                        img_label = img_label.mean(dim=0)
+
+                        # Run one iteration of TinyNeRF and get the rendered RGB image.
+                        outputs, latent = model_forward(rays_o, rays_d,
+                                               near, far, model,
+                                               chunksize=chunksize,
+                                               arm_angle=angle,
+                                               DOF=DOF,
+                                               output_flag=different_arch)
+                        latent = latent.mean(dim=0, keepdim=True).detach()
+                        latents[v_i, train_amount + j] = latent
+
+                        rgb_predicted = outputs['rgb_map']
+
+                        img_label_tensor = img_label.reshape(-1).to(device)
+
+                        v_loss = torch.nn.functional.mse_loss(rgb_predicted, img_label_tensor)
+
+                        valid_epoch_loss.append(v_loss.item())
+
+                        np_image = rgb_predicted.reshape([height, width, 1]).detach().cpu().numpy()
+                        if v_i < max_pic_save:
+                            valid_image.append(np_image)
+                loss_valid = np.mean(valid_epoch_loss)
+
+                print("SM-Loss:", loss_valid, 'patience', patience)
+                scheduler.step(loss_valid)
+
+                # save test image
+                np_image_combine = np.hstack(valid_image)
+                np_image_combine = np.dstack((np_image_combine, np_image_combine, np_image_combine))
+                np_image_combine = np.clip(np_image_combine,0,1)
+                matplotlib.image.imsave(LOG_PATH + '/image/' + 'latest.png', np_image_combine)
+                if Flag_save_image_during_training:
+                    matplotlib.image.imsave(LOG_PATH + '/image/' + '%d.png' % totalGradientSteps, np_image_combine)
+
+                record_file_train.write(str(loss_train) + "\n")
+                record_file_val.write(str(loss_valid) + "\n")
+                torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt'%totalGradientSteps)
+
+                if min_loss > loss_valid:
+                    """record the best image and model"""
+                    min_loss = loss_valid
+                    matplotlib.image.imsave(LOG_PATH + '/image/' + 'best.png', np_image_combine)
+                    torch.save(model.state_dict(), LOG_PATH + '/best_model/best_model.pt')
+                    patience = 0
+                elif loss_valid == loss_v_last:
+                    print("restart")
+                    return False
+                else:
+                    patience += 1
+                loss_v_last = loss_valid
+                # os.makedirs(LOG_PATH + "epoch_%d_model" % i, exist_ok=True)
+                # torch.save(model.state_dict(), LOG_PATH + 'epoch_%d_model/nerf.pt' % i)
+
+            if patience > Patience_threshold:
+                break
+            counter += 1
+
+            # torch.cuda.empty_cache()    # to save memory
+    return True, latents
 
 
-def main(config, buffer, totalGradientSteps):
+def main(config, data, totalGradientSteps):
     print("\n\nSelfmodel-training initialized...\n")
     sim_real = config.dreamer.selfModel.sim_real
     arm_ee = config.dreamer.selfModel.arm_ee
@@ -178,8 +181,8 @@ def main(config, buffer, totalGradientSteps):
     robotid = config.robotID
     FLAG_PositionalEncoder = config.dreamer.selfModel.positionalEncoder
 
-    # 0:OM, 1:OneOut, 2: OneOut with distance
-    different_arch = 0
+    # 0:OM, 1:OneOut, 2: OneOut with distance, 4: Output with latents
+    different_arch = 4
 
     np.random.seed(seed_num)
     random.seed(seed_num)
@@ -204,9 +207,9 @@ def main(config, buffer, totalGradientSteps):
     else:
         pretrained_model_pth = LOG_PATH + '/best_model/model_epoch%d.pt'%((totalGradientSteps - config.replayRatio) * 10)
 
-    config = config.dreamer.selfModel
-    if different_arch != 0:
-        LOG_PATH += 'diff_out_%d' % different_arch
+    config = config.dreamer
+    #if different_arch != 0:
+    #    LOG_PATH += 'diff_out_%d' % different_arch
     print("Data Loaded!")
     os.makedirs(LOG_PATH + "/image/", exist_ok=True)
     os.makedirs(LOG_PATH + "/best_model/", exist_ok=True)
@@ -215,7 +218,7 @@ def main(config, buffer, totalGradientSteps):
     """arm dof = 2+3; arm dof=3+3"""
 
     # Stratified sampling
-    n_samples = config.nSamples  # Number of spatial samples per ray
+    n_samples = config.selfModel.nSamples  # Number of spatial samples per ray
     perturb = True  # If set, applies noise to sample positions
     inverse_depth = False  # If set, samples points linearly in inverse depth
 
@@ -224,10 +227,13 @@ def main(config, buffer, totalGradientSteps):
     perturb_hierarchical = False  # If set, applies noise to sample positions  # again no use (eze)
 
     # Training
-    n_iters = config.nIters  # default = 400000 (eze)
+    n_iters = config.selfModel.nIters  # default = 400000 (eze)
     one_image_per_step = True  # One image per gradient step (disables batching)  # No use again (eze)
-    center_crop = True  # Crop the center of image (one_image_per_)   # debug
-    center_crop_iters = 200  # Stop cropping center after this many epochs
+    if totalGradientSteps == 0:
+        center_crop = True  # Crop the center of image (one_image_per_)   # debug
+        center_crop_iters = 200  # Stop cropping center after this many epochs
+    else:
+        center_crop = False
 
     # Early Stopping
     warmup_iters = 400  # Number of iterations during warmup phase
@@ -246,7 +252,7 @@ def main(config, buffer, totalGradientSteps):
 
     record_file_train = open(LOG_PATH + "/log_train.txt", "w")
     record_file_val = open(LOG_PATH + "/log_val.txt", "w")
-    Patience_threshold = 100  # only use in train() (eze)
+    Patience_threshold = 100
 
     # pretrained_model_pth = 'train_log/real_train_1_log0928_%ddof_100(0)/best_model/'%num_data
     # pretrained_model_pth = 'train_log/real_id1_10000(1)_PE(arm)/best_model/'
@@ -254,23 +260,26 @@ def main(config, buffer, totalGradientSteps):
     for _ in range(n_restarts):
 
         model, optimizer = init_models(d_input=(DOF - 2) + 3,  # DOF + 3 -> xyz and angle2 or 3 -> xyz
-                                       d_filter=config.d_filter,
+                                       d_filter=config.selfModel.d_filter,
                                        output_size=2,
                                        lr=5e-4,  # 5e-4
                                        pretrained_model_pth=pretrained_model_pth,
-                                       FLAG_PositionalEncoder=FLAG_PositionalEncoder
+                                       FLAG_PositionalEncoder=FLAG_PositionalEncoder,
+                                       return_latent=True
                                        )
 
-        success = train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH,
-                        center_crop, center_crop_iters, record_file_train,
-                        record_file_val, Patience_threshold, buffer, config, totalGradientSteps)
+        success, latents = train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH,
+                                 center_crop, center_crop_iters, record_file_train,
+                                 record_file_val, Patience_threshold, data, config, totalGradientSteps)
         if success:
-            print('SelfModel-Training-step successful!')
+            print('SelfModel-Training successful!')
             break
 
     print(f'Done!')
     record_file_train.close()
     record_file_val.close()
+
+    return latents
 
 
 if __name__ == "__main__":

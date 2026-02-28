@@ -480,7 +480,7 @@ def plot_3d_visual(x, y, z, if_transform=True):
 
 
 # ---------------------------------------------------------
-# SM stuff, (eze)
+# (eze)
 # ---------------------------------------------------------
 def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_size=2, FLAG_PositionalEncoder = False, return_latent=False):
 
@@ -546,7 +546,7 @@ def selfmodelEvalForward(config, observationShape, data, initializeLatents=False
         chunksize = eval(config.selfModel.chunkSize)  # Modify as needed to fit in GPU memory
 
         _, smLatentState = model_forward(rays_o, rays_d, near, far, model, data, DOF, chunksize, n_samples, output_flag=4)
-        smLatentState = smLatentState.mean(dim=0, keepdim=True)
+        smLatentState = smLatentState.mean(dim=0, keepdim=True).detach()
 
         return smLatentState
 
