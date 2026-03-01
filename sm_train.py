@@ -55,7 +55,6 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
 
     chunksize = eval(config.selfModel.chunkSize)  # Modify as needed to fit in GPU memory
     display_rate = config.selfModel.displayRate  # int(select_data_amount*tr)  # Display test output every X epochs
-    totalGradientSteps = totalGradientSteps * 10
     latents = torch.zeros(batchSize, batchLength-1, config.selfModel.d_filter//4, device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
     counter = 0
 
@@ -105,6 +104,7 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
                 valid_epoch_loss = []
                 valid_psnr = []
                 valid_image = []
+                c = 0
 
                 for j in range(int(config.batchLength * 0.2)):
                     for v_i in range(batchSize):
@@ -119,7 +119,6 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
                                                arm_angle=angle,
                                                DOF=DOF,
                                                output_flag=different_arch)
-                        latent = latent.mean(dim=0, keepdim=True).detach()
                         latents[v_i, train_amount + j] = latent
 
                         rgb_predicted = outputs['rgb_map']
@@ -131,7 +130,8 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
                         valid_epoch_loss.append(v_loss.item())
 
                         np_image = rgb_predicted.reshape([height, width, 1]).detach().cpu().numpy()
-                        if v_i < max_pic_save:
+                        c += 1
+                        if c < max_pic_save:
                             valid_image.append(np_image)
                 loss_valid = np.mean(valid_epoch_loss)
 
@@ -144,11 +144,11 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
                 np_image_combine = np.clip(np_image_combine,0,1)
                 matplotlib.image.imsave(LOG_PATH + '/image/' + 'latest.png', np_image_combine)
                 if Flag_save_image_during_training:
-                    matplotlib.image.imsave(LOG_PATH + '/image/' + '%d.png' % totalGradientSteps, np_image_combine)
+                    matplotlib.image.imsave(LOG_PATH + '/image/' + '%d.png' %((totalGradientSteps + 1) * 1000), np_image_combine)
 
                 record_file_train.write(str(loss_train) + "\n")
                 record_file_val.write(str(loss_valid) + "\n")
-                torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt'%totalGradientSteps)
+                torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt'%((totalGradientSteps + 1) * 1000))
 
                 if min_loss > loss_valid:
                     """record the best image and model"""
@@ -205,7 +205,7 @@ def main(config, data, totalGradientSteps):
     if totalGradientSteps == 0:
         pretrained_model_pth = LOG_PATH + '/best_model/best_model.pt'
     else:
-        pretrained_model_pth = LOG_PATH + '/best_model/model_epoch%d.pt'%((totalGradientSteps - config.replayRatio) * 10)
+        pretrained_model_pth = LOG_PATH + '/best_model/model_epoch%d.pt'%(totalGradientSteps * 1000)
 
     config = config.dreamer
     #if different_arch != 0:
@@ -234,6 +234,7 @@ def main(config, data, totalGradientSteps):
         center_crop_iters = 200  # Stop cropping center after this many epochs
     else:
         center_crop = False
+        center_crop_iters = 0
 
     # Early Stopping
     warmup_iters = 400  # Number of iterations during warmup phase

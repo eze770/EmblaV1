@@ -14,7 +14,10 @@ Extending DreamerV3 for robotic application and better Morphologieawareness by i
 
 ## Current state
 
-DO NOT RUN!!! (will most likely crash your hardware)
+Core architecture done!
+SM needs rework for Performance (very slow at the moment).
 
 ## Acknowledgements
 
+[NaturalDreamer](https://github.com/InexperiencedMe/NaturalDreamer) Helped me to understand the DreamerV3 Architecture. Used the Code as a base.
+[SelfModel](https://github.com/H-Y-H-Y-H/SelfSimRobot) Original Selfmodel-code, which I modified and fused with the DreamerV3 Architecture.

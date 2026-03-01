@@ -265,7 +265,7 @@ class FBV_SM(nn.Module):
             x = self.feed_forward(torch.cat((x_pos, x_cmd,x), dim=1))
 
         if self.return_latent:
-            return self.output(x), x  # x = latent, (eze)
+            return self.output(x), x.mean(dim=0, keepdim=True).detach()  # x = latent, (eze)
         else:
             return self.output(x)
 

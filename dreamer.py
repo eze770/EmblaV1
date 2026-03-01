@@ -33,7 +33,7 @@ class Dreamer:
         self.recurrentModel                    = RecurrentModel(config.recurrentSize, self.latentSize, actionSize,                                     config.recurrentModel ).to(self.device)
         self.priorNet                          = PriorNet(config.recurrentSize, config.latentLength, config.latentClasses,                             config.priorNet       ).to(self.device)
         self.posteriorNet                      = PosteriorNet(config.recurrentSize + config.encodedObsSize, config.latentLength, config.latentClasses, config.posteriorNet   ).to(self.device)
-        self.rewardPredictor                   = RewardModel(self.wmFullStateSize,                                                                       config.reward         ).to(self.device)
+        self.rewardPredictor                   = RewardModel(self.fullStateSize,                                                                       config.reward         ).to(self.device)
 
         if config.useContinuationPrediction:
             self.continuePredictor  = ContinueModel(self.fullStateSize,                                                                                config.continuation   ).to(self.device)
@@ -53,8 +53,6 @@ class Dreamer:
         self.totalEpisodes      = 0
         self.totalEnvSteps      = 0
         self.totalGradientSteps = 0
-
-        selfmodelEvalForward(config=configFile, observationShape=observationShape, data=torch.as_tensor([0, 0, 0, 0, 0, 0, 0]), initializeLatents=True)  # save one random latent state for Dreamer start, (eze)
 
 
     def worldModelTraining(self, data, smLatentStates):
@@ -86,6 +84,8 @@ class Dreamer:
         reconstructionDistribution =  Independent(Normal(reconstructionMeans, 1), len(self.observationShape))
         reconstructionLoss         = -reconstructionDistribution.log_prob(data.observations[:, 1:]).mean()
 
+        fullStates = torch.cat((fullStates, smLatentStates), dim=-1)
+
         rewardDistribution  =  self.rewardPredictor(fullStates)
         rewardLoss          = -rewardDistribution.log_prob(data.rewards[:, 1:].squeeze(-1)).mean()
 
@@ -103,11 +103,6 @@ class Dreamer:
         klLoss          = (priorLoss + posteriorLoss).mean()
 
         worldModelLoss =  reconstructionLoss + rewardLoss + klLoss # I think that the reconstruction loss is relatively a bit too high (11k)s
-
-        print("smLatentStateShape: ", smLatentStates.shape)
-        print("Last SM latent: ", smLatentStates[:, 62, :])
-
-        fullStates = torch.cat((fullStates, smLatentStates), dim=-1)
         
         if self.config.useContinuationPrediction:
             continueDistribution = self.continuePredictor(fullStates)
@@ -137,17 +132,24 @@ class Dreamer:
             action, logprob, entropy = self.actor(fullState.detach(), training=True)
             recurrentState = self.recurrentModel(recurrentState, latentState, action)
             latentState, _ = self.priorNet(recurrentState)
-            smLatentState  = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles)
+            smLatentStates = torch.zeros(self.config.batchSize * (self.config.batchLength - 1), self.config.selfModel.d_filter // 4, device=device)
+            counter = 0
+            for t in range(len(angles[0, 1:])):
+                for b in range(len(angles[:, t])):
+                    smLatentStates[counter] = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles[b, t])
+                    counter += 1
 
-            fullState = torch.cat((recurrentState, latentState, smLatentState), -1)
+            fullState = torch.cat((recurrentState, latentState, smLatentStates), -1)
             fullStates.append(fullState)
             logprobs.append(logprob)
             entropies.append(entropy)
-            print("range angles: ", range(angles))
-            for i in range(angles[:, 0]):
-                for j in range(angles[0, :]):
-                    vel[i, j] += (action[i, j] - 0.1) * self.dt  # 0.1 as simulated friction, (eze)
-                    angles[i, j] += vel[i, j] * self.dt
+            action = action.to(vel)
+            counter = 0
+            for t in range(len(angles[0, 1:])):
+                for b in range(len(angles[:, t])):
+                    vel[b, t] += (action[counter] - 0.1) * self.dt  # 0.1 as simulated friction, (eze)
+                    angles[b, t] += vel[b, t] * self.dt
+                    counter += 1
             #angles = torch.clamp(angles, -np.pi, np.pi)  # for real Robot, (eze)
             vel = torch.clamp(vel, -5.0, 5.0)
 

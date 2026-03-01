@@ -518,18 +518,22 @@ def selfmodelEvalForward(config, observationShape, data, initializeLatents=False
     config.dreamer.selfModel.sim_real, config.robotID, config.seed, add_name, config.dreamer.selfModel.arm_ee,
     config.runName)
 
-    model, _ = init_models(d_input=(config.dreamer.selfModel.dof - 2) + 3, d_filter=128,
-                                                   pretrained_model_pth=pretrained_selfModel_pth + "/best_model/best_model.pt",
-                                                   output_size=2,
-                                                   FLAG_PositionalEncoder=config.dreamer.selfModel.positionalEncoder,
-                                                   return_latent=True)  # SelfModel (already on device), (eze)
-    model.eval()
-
     if initializeLatents:
+        model, _ = init_models(d_input=(config.dreamer.selfModel.dof - 2) + 3, d_filter=128,
+                                                       output_size=2,
+                                                       FLAG_PositionalEncoder=config.dreamer.selfModel.positionalEncoder,
+                                                       return_latent=True)  # SelfModel (already on device), (eze)
+
         os.makedirs(pretrained_selfModel_pth + "/best_model/", exist_ok=True)
         torch.save(model.state_dict(), pretrained_selfModel_pth + '/best_model/best_model.pt')
     else:
 
+        model, _ = init_models(d_input=(config.dreamer.selfModel.dof - 2) + 3, d_filter=128,
+                                                       pretrained_model_pth=pretrained_selfModel_pth + "/best_model/best_model.pt",
+                                                       output_size=2,
+                                                       FLAG_PositionalEncoder=config.dreamer.selfModel.positionalEncoder,
+                                                       return_latent=True)  # SelfModel (already on device), (eze)
+        model.eval()
         config = config.dreamer
 
         Camera_FOV = config.selfModel.cameraFOV
@@ -546,7 +550,6 @@ def selfmodelEvalForward(config, observationShape, data, initializeLatents=False
         chunksize = eval(config.selfModel.chunkSize)  # Modify as needed to fit in GPU memory
 
         _, smLatentState = model_forward(rays_o, rays_d, near, far, model, data, DOF, chunksize, n_samples, output_flag=4)
-        smLatentState = smLatentState.mean(dim=0, keepdim=True).detach()
 
         return smLatentState
 

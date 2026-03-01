@@ -37,6 +37,7 @@ def main(configFile):
     if config.resume:
         dreamer.loadCheckpoint(checkpointToLoad)
 
+    selfmodelEvalForward(config=config, observationShape=observationShape, data=torch.as_tensor([0, 0, 0, 0, 0, 0, 0]), initializeLatents=True)  # save one random latent state for Dreamer start, (eze)
     dreamer.environmentInteraction(env, config.episodesBeforeStart, seed=config.seed)
 
     iterationsNum = config.gradientSteps // config.replayRatio
@@ -50,7 +51,6 @@ def main(configFile):
                 for t in range(1, config.dreamer.batchLength):
                     for b in range(len(sampledData.angles[:, t])):
                         smLatentStates[b, t] = selfmodelEvalForward(config=config, observationShape=observationShape, data=sampledData.angles[b, t])  # separated training and this step because SM is not dynamic, which means that sampledData would be way less, (eze)
-                smLatentState = torch.stack(smLatentState, dim=1)
             initialStates, worldModelMetrics    = dreamer.worldModelTraining(sampledData, smLatentStates)  # initial states also contains SM Latents (used for continuationpredictor), (eze)
             behaviorMetrics                     = dreamer.behaviorTraining(initialStates, sampledData.angles, sampledData.vel)
             dreamer.totalGradientSteps += 1
