@@ -19,5 +19,5 @@ SM needs rework for Performance (very slow at the moment).
 
 ## Acknowledgements
 
-[NaturalDreamer](https://github.com/InexperiencedMe/NaturalDreamer) Helped me to understand the DreamerV3 Architecture. Used the Code as a base.
-[SelfModel](https://github.com/H-Y-H-Y-H/SelfSimRobot) Original Selfmodel-code, which I modified and fused with the DreamerV3 Architecture.
+- [NaturalDreamer](https://github.com/InexperiencedMe/NaturalDreamer) Helped me to understand the DreamerV3 Architecture. Used the Code as a base.
+- [SelfModel](https://github.com/H-Y-H-Y-H/SelfSimRobot) Original Selfmodel-code, which I modified and fused with the DreamerV3 Architecture.

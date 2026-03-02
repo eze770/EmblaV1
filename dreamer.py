@@ -212,8 +212,8 @@ class Dreamer:
                 actionNumpy     = action.cpu().numpy().reshape(-1)
 
                 nextObservation, reward, done = env.step(actionNumpy)
-                angles = torch.as_tensor(env.unwrapped.data.qpos.copy()[:7], device=torch.device("cpu"), dtype=torch.float32)  # qpos from documentation, (eze)
-                vel = torch.as_tensor(env.unwrapped.data.qvel.copy()[:7], device=torch.device("cpu"), dtype=torch.float32)  # only used in Dreams, (eze)
+                angles = torch.as_tensor(env.unwrapped.data.qpos.copy()[:self.config.selfModel.dof], device=torch.device("cpu"), dtype=torch.float32)  # qpos from documentation, (eze)
+                vel = torch.as_tensor(env.unwrapped.data.qvel.copy()[:self.config.selfModel.dof], device=torch.device("cpu"), dtype=torch.float32)  # only used in Dreams, (eze)
                 if not evaluation:
                     self.buffer.add(observation, actionNumpy, reward, nextObservation, done, angles, vel)
 
