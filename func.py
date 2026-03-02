@@ -139,8 +139,8 @@ def get_rays(
     # debug jiong @ Aug 26, to(focal_length) is to focal_length's device, transfered again after get_rays function
     
     i, j = torch.meshgrid(
-        torch.arange(width, dtype=torch.float32),
-        torch.arange(height, dtype=torch.float32),
+        torch.arange(width, dtype=torch.float32, device=device),
+        torch.arange(height, dtype=torch.float32, device=device),
         indexing='ij')
 
     directions = torch.stack([(i - width * .5) / focal_length,
@@ -151,7 +151,8 @@ def get_rays(
 
     # Apply camera pose to directions
     rays_d = directions
-    rays_o = torch.from_numpy(np.asarray([1,0,0],dtype=np.float32)).expand(directions.shape)
+    rays_o = torch.tensor([1, 0, 0], dtype=torch.float32, device=device)
+    rays_o = rays_o.expand(directions.shape)
 
     rays_d_clone = rays_d.clone()
     rays_d[..., 0], rays_d[..., 2] = rays_d_clone[..., 2].clone(), rays_d_clone[..., 0].clone()
@@ -159,7 +160,7 @@ def get_rays(
     # Origin is same for all directions (the optical center)
     rotation_matrix = torch.tensor([[1, 0, 0],
                                     [0, -1, 0],
-                                    [0, 0, -1]])
+                                    [0, 0, -1]], dtype=torch.float32, device=device)
     rotation_matrix = rotation_matrix[None, None].to(rays_d)
 
     # Rotate the points
@@ -169,15 +170,18 @@ def get_rays(
     return rays_o, rays_d
 
 def sample_stratified(
-        rays_o: torch.Tensor,
-        rays_d: torch.Tensor,
-        arm_angle: torch.Tensor,
+        rays_o: torch.Tensor,  # [N_rays, 3]
+        rays_d: torch.Tensor,  # [N_rays, 3]
+        arm_angle: torch.Tensor,  # [B, :]
         near: float,
         far: float,
         n_samples: int,
         perturb: Optional[bool] = True,
         inverse_depth: bool = False
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+
+    B = arm_angle.shape[0]
+    N_rays = rays_o.shape[0]
 
     # Grab samples for space integration along ray
     t_vals = torch.linspace(0., 1., n_samples, device=rays_o.device)
@@ -191,23 +195,29 @@ def sample_stratified(
     # Draw uniform samples from bins along ray
     if perturb:
         mids = .5 * (x_vals[1:] + x_vals[:-1])
-        upper = torch.concat([mids, x_vals[-1:]], dim=-1)
-        lower = torch.concat([x_vals[:1], mids], dim=-1)
-        t_rand = torch.rand([n_samples], device=x_vals.device)
+        upper = torch.concat([mids, x_vals[-1:]], dim=0)
+        lower = torch.concat([x_vals[:1], mids], dim=0)
+        t_rand = torch.rand([n_samples], device=device)
         x_vals = lower + (upper - lower) * t_rand
-    x_vals = x_vals.expand(list(rays_o.shape[:-1]) + [n_samples])
 
+    # [1, N_rays, n_samples]
+    x_vals = x_vals.view(1, 1, n_samples).expand(B, N_rays, n_samples)
 
+    # [1, N_rays, 3]
+    rays_o = rays_o.unsqueeze(0)
+    rays_d = rays_d.unsqueeze(0)
+
+    # [B, N_rays, n_samples, 3]
     pts = rays_o[..., None, :] + rays_d[..., None, :] * x_vals[..., :, None]
 
-    pose_matrix = pts_trans_matrix(arm_angle[0], arm_angle[1])
+    # Transformationsmatrix
+    pose_matrix = pts_trans_matrix(arm_angle[:, 0], arm_angle[:, 1]).to(device)
 
-    pose_matrix = pose_matrix.to(pts)
-    # Transpose your transformation matrix for correct matrix multiplication
-    transformation_matrix = pose_matrix[:3,:3]
+    # [B, 3, 3]
+    R = pose_matrix[:, :3, :3]
 
-    # Apply the transformation
-    pts = torch.matmul(pts,transformation_matrix)
+    # Batch Matrix Multiply
+    pts = torch.matmul(pts, R[:, None, :, :])
 
     return pts, x_vals
 
@@ -226,7 +236,7 @@ def VR_rendering(
 
     dense = 1.0 - torch.exp(-nn.functional.relu(raw[..., 0]))
 
-    render_img = torch.sum(dense, dim=1)
+    render_img = torch.sum(dense, dim=-1)
 
     return render_img, dense
 
@@ -242,11 +252,10 @@ def VRAT_rendering(
 
     # add one elements for each ray to compensate the size to 64
     dists = torch.cat([dists, 1e10 * torch.ones_like(dists[..., :1])], dim=-1).to(device)
-    rays_d = rays_d.to(device)
     dists = dists * torch.norm(rays_d[..., None, :], dim=-1)
     alpha_dense = 1.0 - torch.exp(-nn.functional.relu(raw[..., 0]) * dists)
 
-    render_img = torch.sum(alpha_dense, dim=1)
+    render_img = torch.sum(alpha_dense, dim=-1)
 
     return render_img, alpha_dense
 
@@ -256,14 +265,14 @@ def OM_rendering(
 
     alpha = 1.0 - torch.exp(-nn.functional.relu(raw[..., 1]))
     rgb_each_point = alpha*raw[..., 0]
-    render_img = torch.sum(rgb_each_point, dim=1)
+    render_img = torch.sum(rgb_each_point, dim=-1)
 
     return render_img, alpha
 
 def OM_rendering_split_output(raw):
     alpha = 1.0 - torch.exp(-nn.functional.relu(raw[..., 1]))
     rgb_each_point = alpha*raw[..., 0]
-    render_img = torch.sum(rgb_each_point, dim=1)
+    render_img = torch.sum(rgb_each_point, dim=-1)
     visibility = raw[..., 0]
     return render_img, alpha, visibility
 
@@ -377,37 +386,50 @@ def model_forward(
         return_latents = True
 
     # Sample query points along each ray.
+    # query_points: [B, N_rays, N_samples, 3]
+    # z_vals:       [B, N_rays, N_samples]
     query_points, z_vals = sample_stratified(
         rays_o, rays_d, arm_angle, near, far, n_samples=n_samples)
     # Prepare batches.
+    B, N_rays, N_samples, _ = query_points.shape
 
     # arm_angle = arm_angle / 180 * np.pi  # not used here because angles already are in rad, (eze)
     if DOF > 2:
-        model_input = torch.cat((query_points, arm_angle[2:DOF].repeat(list(query_points.shape[:2]) + [1])), dim=-1)
+        extra = arm_angle[:, 2:DOF]  # [B, DOF-2]
+
+        extra = extra[:, None, None, :]  # [B,1,1,DOF-2]
+        extra = extra.expand(B, N_rays, N_samples, DOF-2)  # [2048, , , 5]
+        model_input = torch.cat((query_points, extra), dim=-1)
 
     # arm_angle[:DOF] -> use one angle
     else:
         model_input = query_points  # orig version 3 input 2dof, Mar30
+
     batches = prepare_chunks(model_input, chunksize=chunksize)
+
     predictions = []
     latent_states = []
+
     for batch in batches:
-        batch = batch.to(device)
         if return_latents:
             prediction, latent_state = model(batch)
             latent_states.append(latent_state)
         else:
             prediction = model(batch)
         predictions.append(prediction)
+
     raw = torch.cat(predictions, dim=0)
-    raw = raw.reshape(list(query_points.shape[:2]) + [raw.shape[-1]])
+    raw = raw.reshape(B, N_rays, N_samples, -1)
+
+    # rays_d zu Batch broadcasten
+    rays_d_batch = rays_d.unsqueeze(0).expand(B, -1, -1)
 
     if output_flag ==0:
         rgb_map, rgb_each_point = OM_rendering(raw)
     elif output_flag ==1:
-        rgb_map, rgb_each_point = VR_rendering(raw, z_vals, rays_d)
+        rgb_map, rgb_each_point = VR_rendering(raw, z_vals, rays_d_batch)
     elif output_flag ==2:
-        rgb_map, rgb_each_point = VRAT_rendering(raw, z_vals, rays_d)
+        rgb_map, rgb_each_point = VRAT_rendering(raw, z_vals, rays_d_batch)
     elif output_flag ==3:
         rgb_map,rgb_each_point, visibility = OM_rendering_split_output(raw)
         return rgb_map, query_points, rgb_each_point, visibility
@@ -443,23 +465,23 @@ def transition_matrix(label: str, value: float) -> np.ndarray:
 
 def transition_matrix_torch(label: str, value: torch.Tensor) -> torch.Tensor:
     """Returns a 4x4 transformation matrix for rotation in 3D space using PyTorch tensors."""
-    matrix = torch.eye(4, dtype=torch.float32)
+    matrix = torch.eye(4, device=device, dtype=torch.float32).unsqueeze(0).repeat(value.shape[0],1,1)
 
     if label == "rot_x":
-        matrix[1, 1] = torch.cos(value)
-        matrix[1, 2] = -torch.sin(value)
-        matrix[2, 1] = torch.sin(value)
-        matrix[2, 2] = torch.cos(value)
+        matrix[:, 1, 1] = torch.cos(value)
+        matrix[:, 1, 2] = -torch.sin(value)
+        matrix[:, 2, 1] = torch.sin(value)
+        matrix[:, 2, 2] = torch.cos(value)
     elif label == "rot_y":
-        matrix[0, 0] = torch.cos(value)
-        matrix[0, 2] = -torch.sin(value)
-        matrix[2, 0] = torch.sin(value)
-        matrix[2, 2] = torch.cos(value)
+        matrix[:, 0, 0] = torch.cos(value)
+        matrix[:, 0, 2] = -torch.sin(value)
+        matrix[:, 2, 0] = torch.sin(value)
+        matrix[:, 2, 2] = torch.cos(value)
     elif label == "rot_z":
-        matrix[0, 0] = torch.cos(value)
-        matrix[0, 1] = -torch.sin(value)
-        matrix[1, 0] = torch.sin(value)
-        matrix[1, 1] = torch.cos(value)
+        matrix[:, 0, 0] = torch.cos(value)
+        matrix[:, 0, 1] = -torch.sin(value)
+        matrix[:, 1, 0] = torch.sin(value)
+        matrix[:, 1, 1] = torch.cos(value)
     else:
         raise ValueError("Invalid label. Use 'rot_x', 'rot_y', or 'rot_z'.")
 
@@ -540,6 +562,7 @@ def selfmodelEvalForward(config, observationShape, data, initializeLatents=False
         height, width = observationShape[0], observationShape[1]
         camera_angle_y = Camera_FOV * np.pi / 180.
         focal = 0.5 * height / np.tan(0.5 * camera_angle_y)
+        focal = torch.tensor(focal, dtype=torch.float32, device="cuda")
 
         rays_o, rays_d = get_rays(height, width, focal)
         DOF = config.selfModel.dof

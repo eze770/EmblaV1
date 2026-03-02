@@ -102,7 +102,7 @@ dreamer:
         d_filter: 128
         nIters: 400000
         displayRate: 1000
-        chunkSize: 2 ** 20
+        chunkSize: 2 ** 15
         nSamples: 64
         cameraFOV: 45.
         lossGoal: 0.0001

@@ -47,10 +47,7 @@ def main(configFile):
             if (config.dreamer.selfModel.nIters / config.dreamer.batchLength * config.dreamer.batchSize) - dreamer.totalGradientSteps >= 0:
                 smLatentStates = sm_train.main(config, sampledData, dreamer.totalGradientSteps)  # initialize SelfModel training, (eze)
             else:
-                smLatentStates = torch.zeros(config.dreamer.batchSize, config.dreamer.batchLength-1, config.dreamer.selfModel.d_filter // 4, device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
-                for t in range(1, config.dreamer.batchLength):
-                    for b in range(len(sampledData.angles[:, t])):
-                        smLatentStates[b, t] = selfmodelEvalForward(config=config, observationShape=observationShape, data=sampledData.angles[b, t])  # separated training and this step because SM is not dynamic, which means that sampledData would be way less, (eze)
+                smLatentStates = selfmodelEvalForward(config=config, observationShape=observationShape, data=sampledData.angles)
             initialStates, worldModelMetrics    = dreamer.worldModelTraining(sampledData, smLatentStates)  # initial states also contains SM Latents (used for continuationpredictor), (eze)
             behaviorMetrics                     = dreamer.behaviorTraining(initialStates, sampledData.angles, sampledData.vel)
             dreamer.totalGradientSteps += 1

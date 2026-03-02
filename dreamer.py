@@ -132,12 +132,7 @@ class Dreamer:
             action, logprob, entropy = self.actor(fullState.detach(), training=True)
             recurrentState = self.recurrentModel(recurrentState, latentState, action)
             latentState, _ = self.priorNet(recurrentState)
-            smLatentStates = torch.zeros(self.config.batchSize * (self.config.batchLength - 1), self.config.selfModel.d_filter // 4, device=device)
-            counter = 0
-            for t in range(len(angles[0, 1:])):
-                for b in range(len(angles[:, t])):
-                    smLatentStates[counter] = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles[b, t])
-                    counter += 1
+            smLatentStates = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles)
 
             fullState = torch.cat((recurrentState, latentState, smLatentStates), -1)
             fullStates.append(fullState)
@@ -199,7 +194,7 @@ class Dreamer:
 
             observation = env.reset(seed= (seed + self.totalEpisodes if seed else None))
             encodedObservation = self.encoder(torch.from_numpy(observation).float().unsqueeze(0).to(self.device))
-            angles = torch.as_tensor(env.unwrapped.data.qpos.copy()[:7], device=torch.device("cpu"), dtype=torch.float32)
+            angles = torch.as_tensor(env.unwrapped.data.qpos.copy()[:self.config.selfModel.dof], device=self.device, dtype=torch.float32).unsqueeze(0)
 
             currentScore, stepCount, done, frames = 0, 0, False, []
             while not done:
@@ -212,8 +207,8 @@ class Dreamer:
                 actionNumpy     = action.cpu().numpy().reshape(-1)
 
                 nextObservation, reward, done = env.step(actionNumpy)
-                angles = torch.as_tensor(env.unwrapped.data.qpos.copy()[:self.config.selfModel.dof], device=torch.device("cpu"), dtype=torch.float32)  # qpos from documentation, (eze)
-                vel = torch.as_tensor(env.unwrapped.data.qvel.copy()[:self.config.selfModel.dof], device=torch.device("cpu"), dtype=torch.float32)  # only used in Dreams, (eze)
+                angles = torch.as_tensor(env.unwrapped.data.qpos.copy()[:self.config.selfModel.dof], device=self.device, dtype=torch.float32)  # qpos from documentation, (eze)
+                vel = torch.as_tensor(env.unwrapped.data.qvel.copy()[:self.config.selfModel.dof], device=self.device, dtype=torch.float32)  # only used in Dreams, (eze)
                 if not evaluation:
                     self.buffer.add(observation, actionNumpy, reward, nextObservation, done, angles, vel)
 
@@ -224,6 +219,8 @@ class Dreamer:
                     frames.append(np.pad(frame, ((0, targetHeight - frame.shape[0]), (0, targetWidth - frame.shape[1]), (0, 0)), mode='edge'))
 
                 encodedObservation = self.encoder(torch.from_numpy(nextObservation).float().unsqueeze(0).to(self.device))
+                angles = angles.unsqueeze(0)
+                vel = vel.unsqueeze(0)
                 observation = nextObservation
                 
                 currentScore += reward
