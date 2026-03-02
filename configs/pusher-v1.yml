@@ -106,6 +106,8 @@ dreamer:
         nSamples: 64
         cameraFOV: 45.
         lossGoal: 0.0001
+        tr: 0.75
+        centerCropIters: 2
 
 folderNames:
     metricsFolder: metrics

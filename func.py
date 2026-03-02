@@ -531,7 +531,7 @@ def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_si
     return model, optimizer
 
 
-def selfmodelEvalForward(config, observationShape, data, initializeLatents=False):  # data is only angles, (eze)
+def selfmodelEvalForward(config, observationShape, data, initializeLatents=False, useBatches=True):  # data is only angles, (eze)
     if config.dreamer.selfModel.positionalEncoder:
         add_name = 'PE'
     else:
@@ -572,9 +572,17 @@ def selfmodelEvalForward(config, observationShape, data, initializeLatents=False
         n_samples = config.selfModel.nSamples
         chunksize = eval(config.selfModel.chunkSize)  # Modify as needed to fit in GPU memory
 
-        _, smLatentState = model_forward(rays_o, rays_d, near, far, model, data, DOF, chunksize, n_samples, output_flag=4)
+        latents = torch.zeros(config.batchSize, config.batchLength, config.selfModel.d_filter // 4, device=device)
 
-        return smLatentState
+        if useBatches:
+            for t in range(config.batchLength):
+                _, latents[:, t] = model_forward(rays_o, rays_d, near, far, model, data, DOF, chunksize, n_samples, output_flag=4)
+
+            latents = latents.reshape(-1, latents.shape[2])
+        else:
+            _, latents = model_forward(rays_o, rays_d, near, far, model, data, DOF, chunksize, n_samples, output_flag=4)
+
+        return latents
 
 
 if __name__ == "__main__":

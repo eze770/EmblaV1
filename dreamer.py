@@ -200,7 +200,7 @@ class Dreamer:
             while not done:
                 recurrentState              = self.recurrentModel(recurrentState, latentState, action)
                 latentState, _              = self.posteriorNet(torch.cat((recurrentState, encodedObservation.view(1, -1)), -1))
-                smLatentState               = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles)
+                smLatentState               = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles, useBatches=False)
                 #print("smLatentStateSize: ", smLatentState.size(), "recurrentStateSize: ", recurrentState.size(), "latentStateSize: ", latentState.size())  # debugging, (eze)
 
                 action          = self.actor(torch.cat((recurrentState, latentState, smLatentState), -1))
@@ -220,7 +220,6 @@ class Dreamer:
 
                 encodedObservation = self.encoder(torch.from_numpy(nextObservation).float().unsqueeze(0).to(self.device))
                 angles = angles.unsqueeze(0)
-                vel = vel.unsqueeze(0)
                 observation = nextObservation
                 
                 currentScore += reward

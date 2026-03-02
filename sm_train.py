@@ -17,9 +17,9 @@ def crop_center(
     r"""
   Crop center square from image.
   """
-    h_offset = round(img.shape[0] * (frac / 2))
-    w_offset = round(img.shape[1] * (frac / 2))
-    return img[h_offset:-h_offset, w_offset:-w_offset]
+    h_offset = round(img.shape[1] * (frac / 2))
+    w_offset = round(img.shape[2] * (frac / 2))
+    return img[:, h_offset:-h_offset, w_offset:-w_offset]
 
 
 def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH,
@@ -28,22 +28,13 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
     Camera_FOV = 45.
     camera_angle_y = Camera_FOV * np.pi / 180.
     focal = 0.5 * 64 / np.tan(0.5 * camera_angle_y)
-    tr = 0.8  # training ratio
+    tr = config.selfModel.tr  # training ratio
     batchLength = config.batchLength
     batchSize = config.batchSize
-    train_amount = int(batchLength * batchSize * tr)
+    train_amount = int(batchLength * tr)
 
     training_imges_snapshot = data.nextObservations.clone()
     training_angles_snapshot = data.angles.clone()
-
-    training_angles_snapshot = training_angles_snapshot.reshape(-1, training_angles_snapshot.shape[2])
-    training_imges_snapshot = training_imges_snapshot.reshape(-1, training_imges_snapshot.shape[2], training_imges_snapshot.shape[3], training_imges_snapshot.shape[4])
-
-    training_img = training_imges_snapshot[:train_amount]
-    training_angles = training_angles_snapshot[:train_amount]
-
-    testing_angles = training_angles_snapshot[train_amount:]
-    testing_img = training_imges_snapshot[train_amount:]
 
     print("SM img data size: ", train_amount)
     print("SM angles data size: ", train_amount)
@@ -54,7 +45,7 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=20, verbose=True)
     patience = 0
     min_loss = np.inf
-    height, width = training_img[0].shape[1:]
+    height, width = training_imges_snapshot[0, 0].shape[1:]
     print("SM height, width: ", height, width)
     rays_o, rays_d = get_rays(height, width, focal)
     print("SM rays: ", rays_o, rays_d)
@@ -64,68 +55,66 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
     latents = torch.zeros(batchSize, batchLength-1, config.selfModel.d_filter//4, device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
 
 
-    model.train()
+    for t in range(batchLength):
+        angles = training_angles_snapshot[:, t]
+        imges = training_imges_snapshot[:, t]
 
-    # Pick an image as the target. # RGB → grayscale, (eze)
-    if training_img.shape[1] in (1, 3):  # Channel first
-        target_img = training_img.mean(dim=1)
-    else:  # Channel last
-        target_img = training_img.mean(dim=-1)
-    """
-    if center_crop:
-        target_img[:center_crop_iters] = crop_center(target_img[:center_crop_iters])
-        rays_o_train, rays_d_train = get_rays(int(height*0.5), int(width*0.5), focal)
-    else:
-        rays_o_train,rays_d_train = rays_o, rays_d
-        """  # not funktional because rays are fix, (eze)
+        # Pick an image as the target. # RGB → grayscale, (eze)
+        if imges.shape[1] in (1, 3):  # Channel first
+            target_img = imges.mean(dim=1)
+        else:  # Channel last
+            target_img = imges.mean(dim=-1)
 
-    rays_o_train, rays_d_train = rays_o, rays_d
-    target_img = target_img.reshape([-1])
+        if t <= train_amount:
+            model.train()
+            """
+            if center_crop and t <= center_crop_iters:
+                target_img[:, :center_crop_iters] = crop_center(target_img[:, :center_crop_iters])
+                rays_o_train, rays_d_train = get_rays(int(height*0.5), int(width*0.5), focal)
+            else:
+                rays_o_train,rays_d_train = rays_o, rays_d"""  # currently not working because tensorshape would change, (eze)
+            rays_o_train, rays_d_train = rays_o, rays_d
 
-    # Run one iteration of TinyNeRF and get the rendered RGB image.
-    outputs, latents_train = model_forward(rays_o_train, rays_d_train,
-                            near, far, model,
-                            chunksize=chunksize,
-                            arm_angle=training_angles,
-                            DOF=DOF,
-                            output_flag= different_arch)
+            target_img = target_img.reshape([-1])
 
-    # Backprop!
-    rgb_predicted = outputs['rgb_map']
-    optimizer.zero_grad()
-    target_img = target_img.to(device)
-    loss = torch.nn.functional.mse_loss(rgb_predicted, target_img)
-    loss.backward()
-    optimizer.step()
-    loss_train = loss.item()
+            # Run one iteration of TinyNeRF and get the rendered RGB image.
+            outputs, latents[:, t] = model_forward(rays_o_train, rays_d_train,
+                                                   near, far, model,
+                                                   chunksize=chunksize,
+                                                   arm_angle=angles,
+                                                   DOF=DOF,
+                                                   output_flag=different_arch)
 
+            # Backprop!
+            rgb_predicted = outputs['rgb_map']
+            optimizer.zero_grad()
+            target_img = target_img.to(device)
+            loss = torch.nn.functional.mse_loss(rgb_predicted, target_img)
+            loss.backward()
+            optimizer.step()
+            loss_train = loss.item()
 
-    # Evaluate testing
-    model.eval()
-    torch.no_grad()
-    valid_psnr = []
-    valid_image = []
+        else:
+            # Evaluate testing
+            model.eval()
+            torch.no_grad()
+            valid_psnr = []
+            valid_image = []
 
-    if training_img.shape[1] in (1, 3):  # Channel first
-        img_label = testing_img.mean(dim=1)
-    else:  # Channel last
-        img_label = testing_img.mean(dim=-1)
+            # Run one iteration of TinyNeRF and get the rendered RGB image.
+            outputs, latents[:, t] = model_forward(rays_o, rays_d,
+                                                   near, far, model,
+                                                   chunksize=chunksize,
+                                                   arm_angle=angles,
+                                                   DOF=DOF,
+                                                   output_flag=different_arch)
 
-    # Run one iteration of TinyNeRF and get the rendered RGB image.
-    outputs, latents_val = model_forward(rays_o, rays_d,
-                            near, far, model,
-                            chunksize=chunksize,
-                            arm_angle=testing_angles,
-                            DOF=DOF,
-                            output_flag=different_arch)
+            rgb_predicted = outputs['rgb_map']
+            img_label_tensor = target_img.reshape(-1)
+            v_loss = torch.nn.functional.mse_loss(rgb_predicted, img_label_tensor)
+            np_image = rgb_predicted.reshape([-1, height, width, 1]).detach().cpu().numpy()
+            valid_image.append(np_image[:7])
 
-    latents = torch.cat((latents_train, latents_val), dim=0)
-
-    rgb_predicted = outputs['rgb_map']
-    img_label_tensor = img_label.reshape(-1)
-    v_loss = torch.nn.functional.mse_loss(rgb_predicted, img_label_tensor)
-    np_image = rgb_predicted.reshape([-1, height, width, 1]).detach().cpu().numpy()
-    valid_image.append(np_image[:7])
     loss_valid = np.mean(v_loss.item())
 
     print("SM-Loss:", loss_valid, 'patience', patience)
@@ -134,14 +123,16 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
     # save test image
     np_image_combine = np.hstack(valid_image)
     np_image_combine = np.dstack((np_image_combine, np_image_combine, np_image_combine))
-    np_image_combine = np.clip(np_image_combine,0,1)
+    np_image_combine = np.clip(np_image_combine, 0, 1)
     matplotlib.image.imsave(LOG_PATH + '/image/' + 'latest.png', np_image_combine)
     if Flag_save_image_during_training:
-        matplotlib.image.imsave(LOG_PATH + '/image/' + '%d.png' %((totalGradientSteps + 1) * config.batchSize * config.batchLength), np_image_combine)
+        matplotlib.image.imsave(
+            LOG_PATH + '/image/' + '%d.png' % ((totalGradientSteps + 1) * config.batchSize * config.batchLength),
+            np_image_combine)
 
     record_file_train.write(str(loss_train) + "\n")
     record_file_val.write(str(loss_valid) + "\n")
-    torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt'%((totalGradientSteps + 1) * 1000))
+    torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt' % ((totalGradientSteps + 1) * batchSize * batchLength))
 
     if min_loss > loss_valid:
         """record the best image and model"""
@@ -162,6 +153,7 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
         break"""  # not used in batch version, (eze)
 
     # torch.cuda.empty_cache()    # to save memory
+    latents = latents.reshape(-1, latents.shape[2])
     return True, latents
 
 
@@ -194,11 +186,6 @@ def main(config, data, totalGradientSteps):
 
     LOG_PATH = "train_log/%s_id%d_(%d)_%s(%s)_%s" % (sim_real, robotid, seed_num, add_name, arm_ee, config.runName)
 
-    if totalGradientSteps == 0:
-        pretrained_model_pth = LOG_PATH + '/best_model/best_model.pt'
-    else:
-        pretrained_model_pth = LOG_PATH + '/best_model/model_epoch%d.pt'%(totalGradientSteps * 1000)
-
     config = config.dreamer
     #if different_arch != 0:
     #    LOG_PATH += 'diff_out_%d' % different_arch
@@ -223,7 +210,7 @@ def main(config, data, totalGradientSteps):
     one_image_per_step = True  # One image per gradient step (disables batching)  # No use again (eze)
     if totalGradientSteps == 0:
         center_crop = True  # Crop the center of image (one_image_per_)   # debug
-        center_crop_iters = 200  # Stop cropping center after this many epochs
+        center_crop_iters = config.selfModel.centerCropIters  # Stop cropping center after this many epochs
     else:
         center_crop = False
         center_crop_iters = 0
@@ -249,6 +236,10 @@ def main(config, data, totalGradientSteps):
 
     # pretrained_model_pth = 'train_log/real_train_1_log0928_%ddof_100(0)/best_model/'%num_data
     # pretrained_model_pth = 'train_log/real_id1_10000(1)_PE(arm)/best_model/'
+    if totalGradientSteps == 0:
+        pretrained_model_pth = LOG_PATH + '/best_model/best_model.pt'
+    else:
+        pretrained_model_pth = LOG_PATH + '/best_model/model_epoch%d.pt'%(totalGradientSteps * config.batchSize * config.batchLength)
 
     for _ in range(n_restarts):
 
