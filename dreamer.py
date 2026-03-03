@@ -132,7 +132,8 @@ class Dreamer:
             action, logprob, entropy = self.actor(fullState.detach(), training=True)
             recurrentState = self.recurrentModel(recurrentState, latentState, action)
             latentState, _ = self.priorNet(recurrentState)
-            smLatentStates = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles)
+            with torch.no_grad():
+                smLatentStates = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles)
 
             fullState = torch.cat((recurrentState, latentState, smLatentStates), -1)
             fullStates.append(fullState)

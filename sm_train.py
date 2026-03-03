@@ -29,12 +29,17 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
     camera_angle_y = Camera_FOV * np.pi / 180.
     focal = 0.5 * 64 / np.tan(0.5 * camera_angle_y)
     tr = config.selfModel.tr  # training ratio
-    batchLength = config.batchLength
-    batchSize = config.batchSize
+    batchLength = int(config.batchLength*2)
+    batchSize = int(config.batchSize/2)
     train_amount = int(batchLength * tr)
 
     training_imges_snapshot = data.nextObservations.clone()
     training_angles_snapshot = data.angles.clone()
+
+    height, width = training_imges_snapshot[0, 0].shape[1:]
+
+    training_imges_snapshot = training_imges_snapshot.reshape(batchSize, batchLength, -1, height, width)
+    training_angles_snapshot = training_angles_snapshot.reshape(batchSize, batchLength, DOF)
 
     print("SM img data size: ", train_amount)
     print("SM angles data size: ", train_amount)
@@ -45,17 +50,16 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=20, verbose=True)
     patience = 0
     min_loss = np.inf
-    height, width = training_imges_snapshot[0, 0].shape[1:]
     print("SM height, width: ", height, width)
     rays_o, rays_d = get_rays(height, width, focal)
-    print("SM rays: ", rays_o, rays_d)
+    print("SM rays: ", rays_o.shape, rays_d.shape)
 
     chunksize = eval(config.selfModel.chunkSize)  # Modify as needed to fit in GPU memory
     display_rate = config.selfModel.displayRate  # int(select_data_amount*tr)  # Display test output every X epochs
     latents = torch.zeros(batchSize, batchLength-1, config.selfModel.d_filter//4, device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
 
 
-    for t in range(batchLength):
+    for t in trange(batchLength, desc="SM"):
         angles = training_angles_snapshot[:, t]
         imges = training_imges_snapshot[:, t]
 
@@ -75,10 +79,10 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
                 rays_o_train,rays_d_train = rays_o, rays_d"""  # currently not working because tensorshape would change, (eze)
             rays_o_train, rays_d_train = rays_o, rays_d
 
-            target_img = target_img.reshape([-1])
+            target_img = target_img.reshape([batchSize, -1])
 
             # Run one iteration of TinyNeRF and get the rendered RGB image.
-            outputs, latents[:, t] = model_forward(rays_o_train, rays_d_train,
+            outputs, latents[:, t] = model_forward(config, rays_o_train, rays_d_train,
                                                    near, far, model,
                                                    chunksize=chunksize,
                                                    arm_angle=angles,
@@ -88,7 +92,6 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
             # Backprop!
             rgb_predicted = outputs['rgb_map']
             optimizer.zero_grad()
-            target_img = target_img.to(device)
             loss = torch.nn.functional.mse_loss(rgb_predicted, target_img)
             loss.backward()
             optimizer.step()
@@ -102,7 +105,7 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
             valid_image = []
 
             # Run one iteration of TinyNeRF and get the rendered RGB image.
-            outputs, latents[:, t] = model_forward(rays_o, rays_d,
+            outputs, latents[:, t] = model_forward(config, rays_o, rays_d,
                                                    near, far, model,
                                                    chunksize=chunksize,
                                                    arm_angle=angles,
@@ -165,8 +168,8 @@ def main(config, data, totalGradientSteps):
     robotid = config.robotID
     FLAG_PositionalEncoder = config.dreamer.selfModel.positionalEncoder
 
-    # 0:OM, 1:OneOut, 2: OneOut with distance, 4: Output with latents
-    different_arch = 4
+    # 0:OM, 1:OneOut, 2: OneOut with distance
+    different_arch = 0
 
     np.random.seed(seed_num)
     random.seed(seed_num)
@@ -249,7 +252,7 @@ def main(config, data, totalGradientSteps):
                                        lr=5e-4,  # 5e-4
                                        pretrained_model_pth=pretrained_model_pth,
                                        FLAG_PositionalEncoder=FLAG_PositionalEncoder,
-                                       return_latent=True
+                                       return_output=True
                                        )
 
         success, latents = train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH,

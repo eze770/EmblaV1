@@ -368,6 +368,7 @@ def prepare_chunks(
 
 
 def model_forward(
+        config,
         rays_o: torch.Tensor,
         rays_d: torch.Tensor,
         near: float,
@@ -380,10 +381,10 @@ def model_forward(
         output_flag: int = 0
 ):
 
-    return_latents = False
+    return_outputs = True
     if output_flag == 4:  # 4 is mode 0 with latent output, (eze)
         output_flag = 0
-        return_latents = True
+        return_outputs = False
 
     # Sample query points along each ray.
     # query_points: [B, N_rays, N_samples, 3]
@@ -407,19 +408,20 @@ def model_forward(
 
     batches = prepare_chunks(model_input, chunksize=chunksize)
 
-    predictions = []
-    latent_states = []
+    predictions = torch.zeros(len(batches), batches[0].shape[0], 2, device=device)
+    latent_states = torch.zeros(len(batches), config.selfModel.d_filter//4, device=device)
 
+    c = 0
     for batch in batches:
-        if return_latents:
+        if return_outputs:
             prediction, latent_state = model(batch)
-            latent_states.append(latent_state)
+            predictions[c] = prediction
         else:
-            prediction = model(batch)
-        predictions.append(prediction)
+            latent_state = model(batch)
+        latent_states[c] = latent_state[0]
+        c += 1
 
-    raw = torch.cat(predictions, dim=0)
-    raw = raw.reshape(B, N_rays, N_samples, -1)
+    raw = predictions.reshape(B, N_rays, N_samples, -1)
 
     # rays_d zu Batch broadcasten
     rays_d_batch = rays_d.unsqueeze(0).expand(B, -1, -1)
@@ -441,11 +443,11 @@ def model_forward(
         'query_points': query_points}
 
     # Store outputs.
-    if return_latents:
-        latent_state = torch.cat(latent_states, dim=0)
+    latent_state = latent_states.view(B, -1, latent_states.shape[-1]).mean(dim=1)
+    if return_outputs:
         return outputs, latent_state
     else:
-        return outputs
+        return latent_states
 
 
 # ---------------------------------------------------------
@@ -504,7 +506,7 @@ def plot_3d_visual(x, y, z, if_transform=True):
 # ---------------------------------------------------------
 # (eze)
 # ---------------------------------------------------------
-def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_size=2, FLAG_PositionalEncoder = False, return_latent=False):
+def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_size=2, FLAG_PositionalEncoder = False, return_output=True):
 
     if FLAG_PositionalEncoder:
         encoder = PositionalEncoder(d_input, n_freqs=10, log_space=True)
@@ -513,14 +515,14 @@ def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_si
                        d_input=d_input,
                        d_filter=d_filter,
                        output_size=output_size,
-                       return_latent=return_latent)
+                       return_output=return_output)
 
     else:
         # Models
         model = FBV_SM(d_input=d_input,
                        d_filter=d_filter,
                        output_size=output_size,
-                       return_latent=return_latent)
+                       return_output=return_output)
     model.to(device)
     # Pretrained Model
     if pretrained_model_pth != None:
@@ -544,7 +546,7 @@ def selfmodelEvalForward(config, observationShape, data, initializeLatents=False
         model, _ = init_models(d_input=(config.dreamer.selfModel.dof - 2) + 3, d_filter=128,
                                                        output_size=2,
                                                        FLAG_PositionalEncoder=config.dreamer.selfModel.positionalEncoder,
-                                                       return_latent=True)  # SelfModel (already on device), (eze)
+                                                       return_output=False)  # SelfModel (already on device), (eze)
 
         os.makedirs(pretrained_selfModel_pth + "/best_model/", exist_ok=True)
         torch.save(model.state_dict(), pretrained_selfModel_pth + '/best_model/best_model.pt')
@@ -554,7 +556,7 @@ def selfmodelEvalForward(config, observationShape, data, initializeLatents=False
                                                        pretrained_model_pth=pretrained_selfModel_pth + "/best_model/best_model.pt",
                                                        output_size=2,
                                                        FLAG_PositionalEncoder=config.dreamer.selfModel.positionalEncoder,
-                                                       return_latent=True)  # SelfModel (already on device), (eze)
+                                                       return_output=False)  # SelfModel (already on device), (eze)
         model.eval()
         config = config.dreamer
 
@@ -576,11 +578,11 @@ def selfmodelEvalForward(config, observationShape, data, initializeLatents=False
 
         if useBatches:
             for t in range(config.batchLength):
-                _, latents[:, t] = model_forward(rays_o, rays_d, near, far, model, data, DOF, chunksize, n_samples, output_flag=4)
+                latents[:, t] = model_forward(config, rays_o, rays_d, near, far, model, data, DOF, chunksize, n_samples, output_flag=4)
 
             latents = latents.reshape(-1, latents.shape[2])
         else:
-            _, latents = model_forward(rays_o, rays_d, near, far, model, data, DOF, chunksize, n_samples, output_flag=4)
+            latents = model_forward(config, rays_o, rays_d, near, far, model, data, DOF, chunksize, n_samples, output_flag=4)
 
         return latents
 
