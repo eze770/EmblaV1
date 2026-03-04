@@ -117,8 +117,8 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
             rgb_predicted = outputs['rgb_map']
             img_label_tensor = target_img.reshape(batchSize, -1)
             v_loss = torch.nn.functional.mse_loss(rgb_predicted, img_label_tensor)
-            np_image = rgb_predicted.reshape([-1, height, width, 1]).detach().cpu().numpy()
-            valid_image.append(np_image[:7])
+            np_image = rgb_predicted.reshape([-1, int(height*0.5), int(width*0.5), 1]).detach().cpu().numpy()
+            valid_image.append(np_image[:6])
 
     loss_valid = np.mean(v_loss.item())
 
@@ -126,7 +126,7 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
     scheduler.step(loss_valid)
 
     # save test image
-    np_image_combine = np.hstack(valid_image)
+    np_image_combine = np.hstack(valid_image[0])
     np_image_combine = np.dstack((np_image_combine, np_image_combine, np_image_combine))
     np_image_combine = np.clip(np_image_combine, 0, 1)
     matplotlib.image.imsave(LOG_PATH + '/image/' + 'latest.png', np_image_combine)
@@ -137,7 +137,7 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
 
     record_file_train.write(str(loss_train) + "\n")
     record_file_val.write(str(loss_valid) + "\n")
-    torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt' % ((totalGradientSteps + 1) * batchSize * batchLength-2))
+    torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt' % ((totalGradientSteps + 1) * batchSize * (batchLength-2)))
 
     if min_loss > loss_valid:
         """record the best image and model"""
@@ -244,7 +244,7 @@ def main(config, data, totalGradientSteps):
     if totalGradientSteps == 0:
         pretrained_model_pth = LOG_PATH + '/best_model/best_model.pt'
     else:
-        pretrained_model_pth = LOG_PATH + '/best_model/model_epoch%d.pt'%(totalGradientSteps * config.batchSize * config.batchLength)
+        pretrained_model_pth = LOG_PATH + '/best_model/model_epoch%d.pt'%(totalGradientSteps * config.batchSize * (config.batchLength-1))
 
     for _ in range(n_restarts):
 

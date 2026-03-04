@@ -399,7 +399,7 @@ def model_forward(
         extra = arm_angle[:, 2:DOF]  # [B, DOF-2]
 
         extra = extra[:, None, None, :]  # [B,1,1,DOF-2]
-        extra = extra.expand(B, N_rays, N_samples, DOF-2)  # [2048, , , 5]
+        extra = extra.expand(B, N_rays, N_samples, DOF-2)
         model_input = torch.cat((query_points, extra), dim=-1)
 
     # arm_angle[:DOF] -> use one angle
@@ -435,7 +435,6 @@ def model_forward(
     elif output_flag ==3:
         rgb_map,rgb_each_point, visibility = OM_rendering_split_output(raw)
         return rgb_map, query_points, rgb_each_point, visibility
-
 
     outputs = {
         'rgb_map': rgb_map,
