@@ -133,7 +133,7 @@ class Dreamer:
             recurrentState = self.recurrentModel(recurrentState, latentState, action)
             latentState, _ = self.priorNet(recurrentState)
             with torch.no_grad():
-                smLatentStates = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles)
+                smLatentStates = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles[:, :-1])
 
             fullState = torch.cat((recurrentState, latentState, smLatentStates), -1)
             fullStates.append(fullState)
@@ -141,7 +141,7 @@ class Dreamer:
             entropies.append(entropy)
             action = action.to(vel)
             counter = 0
-            for t in range(len(angles[0, 1:])):
+            for t in range(len(angles[0, :-1])):
                 for b in range(len(angles[:, t])):
                     vel[b, t] += (action[counter] - 0.1) * self.dt  # 0.1 as simulated friction, (eze)
                     angles[b, t] += vel[b, t] * self.dt

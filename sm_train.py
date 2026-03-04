@@ -19,7 +19,7 @@ def crop_center(
   """
     h_offset = round(img.shape[1] * (frac / 2))
     w_offset = round(img.shape[2] * (frac / 2))
-    return img[:, h_offset:-h_offset, w_offset:-w_offset]
+    return img[..., h_offset:-h_offset, w_offset:-w_offset]
 
 
 def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH,
@@ -38,6 +38,8 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
 
     height, width = training_imges_snapshot[0, 0].shape[1:]
 
+    print(training_imges_snapshot.shape)
+
     training_imges_snapshot = training_imges_snapshot.reshape(batchSize, batchLength, -1, height, width)
     training_angles_snapshot = training_angles_snapshot.reshape(batchSize, batchLength, DOF)
 
@@ -51,23 +53,23 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
     patience = 0
     min_loss = np.inf
     print("SM height, width: ", height, width)
-    rays_o, rays_d = get_rays(height, width, focal)
+    rays_o, rays_d = get_rays(int(0.5*height), int(0.5*width), focal)
     print("SM rays: ", rays_o.shape, rays_d.shape)
 
     chunksize = eval(config.selfModel.chunkSize)  # Modify as needed to fit in GPU memory
     display_rate = config.selfModel.displayRate  # int(select_data_amount*tr)  # Display test output every X epochs
-    latents = torch.zeros(batchSize, batchLength-1, config.selfModel.d_filter//4, device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
+    latents = torch.zeros(batchSize, batchLength-2, config.selfModel.d_filter//4, device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
 
 
-    for t in trange(batchLength, desc="SM"):
+    for t in trange(batchLength-2, desc="SM"):  # -2 because we multiplied by 2, did substraction afterwards so tr stays clean, (eze)
         angles = training_angles_snapshot[:, t]
         imges = training_imges_snapshot[:, t]
 
         # Pick an image as the target. # RGB → grayscale, (eze)
         if imges.shape[1] in (1, 3):  # Channel first
-            target_img = imges.mean(dim=1)
+            target_img = crop_center(imges.mean(dim=1))
         else:  # Channel last
-            target_img = imges.mean(dim=-1)
+            target_img = crop_center(imges.mean(dim=-1))
 
         if t <= train_amount:
             model.train()
@@ -76,7 +78,7 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
                 target_img[:, :center_crop_iters] = crop_center(target_img[:, :center_crop_iters])
                 rays_o_train, rays_d_train = get_rays(int(height*0.5), int(width*0.5), focal)
             else:
-                rays_o_train,rays_d_train = rays_o, rays_d"""  # currently not working because tensorshape would change, (eze)
+                rays_o_train,rays_d_train = rays_o, rays_d"""
             rays_o_train, rays_d_train = rays_o, rays_d
 
             target_img = target_img.reshape([batchSize, -1])
@@ -113,7 +115,7 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
                                                    output_flag=different_arch)
 
             rgb_predicted = outputs['rgb_map']
-            img_label_tensor = target_img.reshape(-1)
+            img_label_tensor = target_img.reshape(batchSize, -1)
             v_loss = torch.nn.functional.mse_loss(rgb_predicted, img_label_tensor)
             np_image = rgb_predicted.reshape([-1, height, width, 1]).detach().cpu().numpy()
             valid_image.append(np_image[:7])
@@ -135,7 +137,7 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
 
     record_file_train.write(str(loss_train) + "\n")
     record_file_val.write(str(loss_valid) + "\n")
-    torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt' % ((totalGradientSteps + 1) * batchSize * batchLength))
+    torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt' % ((totalGradientSteps + 1) * batchSize * batchLength-2))
 
     if min_loss > loss_valid:
         """record the best image and model"""
@@ -156,7 +158,7 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
         break"""  # not used in batch version, (eze)
 
     # torch.cuda.empty_cache()    # to save memory
-    latents = latents.reshape(-1, latents.shape[2])
+    latents = latents.reshape(config.batchSize, config.batchLength-1, latents.shape[2])
     return True, latents
 
 

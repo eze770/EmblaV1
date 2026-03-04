@@ -447,7 +447,7 @@ def model_forward(
     if return_outputs:
         return outputs, latent_state
     else:
-        return latent_states
+        return latent_state
 
 
 # ---------------------------------------------------------
@@ -561,12 +561,12 @@ def selfmodelEvalForward(config, observationShape, data, initializeLatents=False
         config = config.dreamer
 
         Camera_FOV = config.selfModel.cameraFOV
-        height, width = observationShape[0], observationShape[1]
+        height, width = observationShape[1], observationShape[2]
         camera_angle_y = Camera_FOV * np.pi / 180.
         focal = 0.5 * height / np.tan(0.5 * camera_angle_y)
         focal = torch.tensor(focal, dtype=torch.float32, device="cuda")
 
-        rays_o, rays_d = get_rays(height, width, focal)
+        rays_o, rays_d = get_rays(int(0.5*height), int(0.5*width), focal)
         DOF = config.selfModel.dof
         cam_dist = config.selfModel.camDist
         nf_size = config.selfModel.nfSize
@@ -574,11 +574,11 @@ def selfmodelEvalForward(config, observationShape, data, initializeLatents=False
         n_samples = config.selfModel.nSamples
         chunksize = eval(config.selfModel.chunkSize)  # Modify as needed to fit in GPU memory
 
-        latents = torch.zeros(config.batchSize, config.batchLength, config.selfModel.d_filter // 4, device=device)
+        latents = torch.zeros(config.batchSize, config.batchLength-1, config.selfModel.d_filter // 4, device=device)
 
         if useBatches:
-            for t in range(config.batchLength):
-                latents[:, t] = model_forward(config, rays_o, rays_d, near, far, model, data, DOF, chunksize, n_samples, output_flag=4)
+            for t in range(config.batchLength-1):
+                latents[:, t] = model_forward(config, rays_o, rays_d, near, far, model, data[:, t], DOF, chunksize, n_samples, output_flag=4)
 
             latents = latents.reshape(-1, latents.shape[2])
         else:
