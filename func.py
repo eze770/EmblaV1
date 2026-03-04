@@ -576,7 +576,7 @@ def selfmodelEvalForward(config, observationShape, data, initializeLatents=False
         latents = torch.zeros(config.batchSize, config.batchLength-1, config.selfModel.d_filter // 4, device=device)
 
         if useBatches:
-            for t in range(config.batchLength-1):
+            for t in range(data.shape[1]-1):
                 latents[:, t] = model_forward(config, rays_o, rays_d, near, far, model, data[:, t], DOF, chunksize, n_samples, output_flag=4)
 
             latents = latents.reshape(-1, latents.shape[2])

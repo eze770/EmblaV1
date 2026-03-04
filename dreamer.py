@@ -133,7 +133,10 @@ class Dreamer:
             recurrentState = self.recurrentModel(recurrentState, latentState, action)
             latentState, _ = self.priorNet(recurrentState)
             with torch.no_grad():
-                smLatentStates = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles[:, :-1])
+                smLatentStates = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape,
+                                                      data=angles[:, :self.config.smStepFreq])
+                smLatentStates = smLatentStates[:self.config.smStepFreq*angles.shape[0]].reshape(angles.shape[0], self.config.smStepFreq, smLatentState.shape[-1]).repeat(1, (self.config.batchLength)//self.config.smStepFreq, 1).reshape(angles.shape[0]*self.config.batchLength, -1)
+                smLatentStates = smLatentStates[:-self.config.batchSize, :]
 
             fullState = torch.cat((recurrentState, latentState, smLatentStates), -1)
             fullStates.append(fullState)
@@ -146,7 +149,7 @@ class Dreamer:
                     vel[b, t] += (action[counter] - 0.1) * self.dt  # 0.1 as simulated friction, (eze)
                     angles[b, t] += vel[b, t] * self.dt
                     counter += 1
-            #angles = torch.clamp(angles, -np.pi, np.pi)  # for real Robot, (eze)
+            # angles = torch.clamp(angles, -np.pi, np.pi)  # for real Robot, (eze)
             vel = torch.clamp(vel, -5.0, 5.0)
 
         fullStates  = torch.stack(fullStates,    dim=1) # (batchSize*batchLength, imaginationHorizon, recurrentSize + latentLength*latentClasses)

@@ -14,7 +14,6 @@ checkpointToLoad: 4k
 episodesBeforeStart: 5
 numInteractionEpisodes: 1
 numEvaluationEpisodes: 1
-startSelfmodel: 4500
 
 dreamer:
     batchSize: 32
@@ -39,6 +38,8 @@ dreamer:
     betaPrior: 1.0
     betaPosterior: 0.1
     entropyScale: 0.0003
+
+    smStepFreq: 2
 
     buffer:
         capacity: 50000

@@ -44,7 +44,7 @@ def main(configFile):
     for _ in tqdm(range(iterationsNum), desc="OverallProgress", colour="green"):
         for _ in tqdm(range(config.replayRatio), desc="Dream", colour="blue"):
             sampledData                         = dreamer.buffer.sample(dreamer.config.batchSize, dreamer.config.batchLength)
-            if (config.dreamer.selfModel.nIters / config.dreamer.batchLength * config.dreamer.batchSize) - dreamer.totalGradientSteps >= 0:
+            if (config.dreamer.selfModel.nIters // (config.dreamer.batchLength-1) * config.dreamer.batchSize) - dreamer.totalGradientSteps >= 0:
                 smLatentStates = sm_train.main(config, sampledData, dreamer.totalGradientSteps)  # initialize SelfModel training, (eze)
             else:
                 smLatentStates = selfmodelEvalForward(config=config, observationShape=observationShape, data=sampledData.angles)
