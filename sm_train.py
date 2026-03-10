@@ -1,25 +1,14 @@
 # Our implementation is based on the NeRF publicly available code from https://github.com/krrish94/nerf-pytorch/ and
 # https://github.com/bmild/nerf
 import random
-
-import torch
+import matplotlib
+import time
 
 from func import *
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print("train,", device)
-
-
-def crop_center(
-        img: torch.Tensor,
-        frac: float = 0.5
-) -> torch.Tensor:
-    r"""
-  Crop center square from image.
-  """
-    h_offset = round(img.shape[1] * (frac / 2))
-    w_offset = round(img.shape[2] * (frac / 2))
-    return img[..., h_offset:-h_offset, w_offset:-w_offset]
+scaler = GradScaler()
 
 
 def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH,
@@ -29,49 +18,50 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
     camera_angle_y = Camera_FOV * np.pi / 180.
     focal = 0.5 * 64 / np.tan(0.5 * camera_angle_y)
     tr = config.selfModel.tr  # training ratio
-    batchLength = int(config.batchLength*2)
-    batchSize = int(config.batchSize/2)
-    train_amount = int(batchLength * tr)
+
+    batchSize = int(config.batchSize)
+    batchLength = int(config.batchLength)
 
     training_imges_snapshot = data.nextObservations.clone()
     training_angles_snapshot = data.angles.clone()
 
     height, width = training_imges_snapshot[0, 0].shape[1:]
 
-    print(training_imges_snapshot.shape)
-
     training_imges_snapshot = training_imges_snapshot.reshape(batchSize, batchLength, -1, height, width)
     training_angles_snapshot = training_angles_snapshot.reshape(batchSize, batchLength, DOF)
 
-    print("SM img data size: ", train_amount)
-    print("SM angles data size: ", train_amount)
-    print("SM Validation amount: ", int(batchLength * 0.2 * batchSize))
+    train_amount = int((batchLength-1) * tr)
 
-    max_pic_save = 6
     loss_v_last = np.inf
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=20, verbose=True)
     patience = 0
     min_loss = np.inf
+
+    rays_o, rays_d = get_rays(int(0.25*height), int(0.25*width), focal)
+    """
+    print(training_imges_snapshot.shape)
+    print("SM img data size: ", train_amount)
+    print("SM angles data size: ", train_amount)
+    print("SM Validation amount: ", int(4 * (1 - tr) * batchSize))
     print("SM height, width: ", height, width)
-    rays_o, rays_d = get_rays(int(0.5*height), int(0.5*width), focal)
-    print("SM rays: ", rays_o.shape, rays_d.shape)
+    print("SM rays: ", rays_o.shape, rays_d.shape)"""
 
     chunksize = eval(config.selfModel.chunkSize)  # Modify as needed to fit in GPU memory
     display_rate = config.selfModel.displayRate  # int(select_data_amount*tr)  # Display test output every X epochs
-    latents = torch.zeros(batchSize, batchLength-2, config.selfModel.d_filter//4, device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
+    latents = torch.zeros(batchSize, batchLength-1, config.selfModel.d_filter//4, device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
 
 
-    for t in trange(batchLength-2, desc="SM"):  # -2 because we multiplied by 2, did substraction afterwards so tr stays clean, (eze)
+    for t in range(batchLength-1):  # -2 because we multiplied by 2, did substraction afterwards so tr stays clean, (eze)
+        one = time.time()
         angles = training_angles_snapshot[:, t]
         imges = training_imges_snapshot[:, t]
 
         # Pick an image as the target. # RGB → grayscale, (eze)
-        if imges.shape[1] in (1, 3):  # Channel first
-            target_img = crop_center(imges.mean(dim=1))
-        else:  # Channel last
-            target_img = crop_center(imges.mean(dim=-1))
 
-        if t <= train_amount:
+        target_img = crop_center(imges.mean(dim=-1 if imges.shape[-1] in (1, 3) else 1))  # ColorChannel first or last, (eze)
+        target_img = target_img.reshape([batchSize, -1])
+
+        if t < train_amount:
             model.train()
             """
             if center_crop and t <= center_crop_iters:
@@ -79,25 +69,27 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
                 rays_o_train, rays_d_train = get_rays(int(height*0.5), int(width*0.5), focal)
             else:
                 rays_o_train,rays_d_train = rays_o, rays_d"""
-            rays_o_train, rays_d_train = rays_o, rays_d
-
-            target_img = target_img.reshape([batchSize, -1])
 
             # Run one iteration of TinyNeRF and get the rendered RGB image.
-            outputs, latents[:, t] = model_forward(config, rays_o_train, rays_d_train,
-                                                   near, far, model,
-                                                   chunksize=chunksize,
-                                                   arm_angle=angles,
-                                                   DOF=DOF,
-                                                   output_flag=different_arch)
-
+            with autocast("cuda"):
+                outputs, latents[:, t] = model_forward(config, rays_o, rays_d,
+                                                       near, far, model,
+                                                       chunksize=chunksize,
+                                                       arm_angle=angles,
+                                                       DOF=DOF,
+                                                       output_flag=different_arch,
+                                                       n_samples=config.selfModel.nSamples)
+            two = time.time()
             # Backprop!
             rgb_predicted = outputs['rgb_map']
-            optimizer.zero_grad()
-            loss = torch.nn.functional.mse_loss(rgb_predicted, target_img)
-            loss.backward()
-            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            with autocast("cuda"):
+                loss = torch.nn.functional.mse_loss(rgb_predicted, target_img)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             loss_train = loss.item()
+            three = time.time()
 
         else:
             # Evaluate testing
@@ -107,17 +99,19 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
             valid_image = []
 
             # Run one iteration of TinyNeRF and get the rendered RGB image.
-            outputs, latents[:, t] = model_forward(config, rays_o, rays_d,
-                                                   near, far, model,
-                                                   chunksize=chunksize,
-                                                   arm_angle=angles,
-                                                   DOF=DOF,
-                                                   output_flag=different_arch)
+            with autocast("cuda"):
+                outputs, latents[:, t] = model_forward(config, rays_o, rays_d,
+                                                       near, far, model,
+                                                       chunksize=chunksize,
+                                                       arm_angle=angles,
+                                                       DOF=DOF,
+                                                       output_flag=different_arch,
+                                                       n_samples=config.selfModel.nSamples)
 
             rgb_predicted = outputs['rgb_map']
-            img_label_tensor = target_img.reshape(batchSize, -1)
-            v_loss = torch.nn.functional.mse_loss(rgb_predicted, img_label_tensor)
-            np_image = rgb_predicted.reshape([-1, int(height*0.5), int(width*0.5), 1]).detach().cpu().numpy()
+            with autocast("cuda"):
+                v_loss = torch.nn.functional.mse_loss(rgb_predicted, target_img)
+            np_image = rgb_predicted.reshape([-1, int(height*0.25), int(width*0.25), 1]).detach().cpu().numpy()
             valid_image.append(np_image[:6])
 
     loss_valid = np.mean(v_loss.item())
@@ -130,14 +124,14 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
     np_image_combine = np.dstack((np_image_combine, np_image_combine, np_image_combine))
     np_image_combine = np.clip(np_image_combine, 0, 1)
     matplotlib.image.imsave(LOG_PATH + '/image/' + 'latest.png', np_image_combine)
-    if Flag_save_image_during_training:
+    if Flag_save_image_during_training and totalGradientSteps % 50 == 0:
         matplotlib.image.imsave(
-            LOG_PATH + '/image/' + '%d.png' % ((totalGradientSteps + 1) * config.batchSize * config.batchLength),
+            LOG_PATH + '/image/' + '%d.png' % ((totalGradientSteps + 1) * batchSize * (batchLength-1)),
             np_image_combine)
 
     record_file_train.write(str(loss_train) + "\n")
     record_file_val.write(str(loss_valid) + "\n")
-    torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt' % ((totalGradientSteps + 1) * batchSize * (batchLength-2)))
+    torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt' % ((totalGradientSteps + 1) * config.batchSize * (batchLength-1)))
 
     if min_loss > loss_valid:
         """record the best image and model"""
@@ -158,12 +152,11 @@ def train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_duri
         break"""  # not used in batch version, (eze)
 
     # torch.cuda.empty_cache()    # to save memory
-    latents = latents.reshape(config.batchSize, config.batchLength-1, latents.shape[2])
-    return True, latents
+    latents = latents.reshape(config.batchSize, (config.batchLength-1), latents.shape[-1])
+    return True, latents, loss_valid
 
 
 def main(config, data, totalGradientSteps):
-    print("\n\nSelfmodel-training initialized...\n")
     sim_real = config.dreamer.selfModel.sim_real
     arm_ee = config.dreamer.selfModel.arm_ee
     seed_num = config.seed
@@ -194,7 +187,6 @@ def main(config, data, totalGradientSteps):
     config = config.dreamer
     #if different_arch != 0:
     #    LOG_PATH += 'diff_out_%d' % different_arch
-    print("Data Loaded!")
     os.makedirs(LOG_PATH + "/image/", exist_ok=True)
     os.makedirs(LOG_PATH + "/best_model/", exist_ok=True)
 
@@ -202,7 +194,6 @@ def main(config, data, totalGradientSteps):
     """arm dof = 2+3; arm dof=3+3"""
 
     # Stratified sampling
-    n_samples = config.selfModel.nSamples  # Number of spatial samples per ray
     perturb = True  # If set, applies noise to sample positions
     inverse_depth = False  # If set, samples points linearly in inverse depth
 
@@ -226,6 +217,7 @@ def main(config, data, totalGradientSteps):
     n_restarts = 1000  # Number of times to restart if training stalls
 
     # We bundle the kwargs for various functions to pass all at once.  # no use (eze)
+    """
     kwargs_sample_stratified = {
         'n_samples': n_samples,
         'perturb': perturb,
@@ -233,10 +225,10 @@ def main(config, data, totalGradientSteps):
     }
     kwargs_sample_hierarchical = {  # no use (eze)
         'perturb': perturb
-    }
+    }"""
 
-    record_file_train = open(LOG_PATH + "/log_train.txt", "w")
-    record_file_val = open(LOG_PATH + "/log_val.txt", "w")
+    record_file_train = open(LOG_PATH + "/log_train.txt", "a")
+    record_file_val = open(LOG_PATH + "/log_val.txt", "a")
     Patience_threshold = 100
 
     # pretrained_model_pth = 'train_log/real_train_1_log0928_%ddof_100(0)/best_model/'%num_data
@@ -244,7 +236,7 @@ def main(config, data, totalGradientSteps):
     if totalGradientSteps == 0:
         pretrained_model_pth = LOG_PATH + '/best_model/best_model.pt'
     else:
-        pretrained_model_pth = LOG_PATH + '/best_model/model_epoch%d.pt'%(totalGradientSteps * config.batchSize * (config.batchLength-1))
+        pretrained_model_pth = LOG_PATH + '/best_model/model_epoch%d.pt'%((totalGradientSteps-config.smFreq+1) * config.batchSize * (config.batchLength-1))
 
     for _ in range(n_restarts):
 
@@ -257,18 +249,17 @@ def main(config, data, totalGradientSteps):
                                        return_output=True
                                        )
 
-        success, latents = train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH,
-                                 center_crop, center_crop_iters, record_file_train,
-                                 record_file_val, Patience_threshold, data, config, totalGradientSteps)
+        success, latents, loss = train(model, optimizer, different_arch, DOF, near, far, Flag_save_image_during_training, LOG_PATH,
+                                       center_crop, center_crop_iters, record_file_train,
+                                       record_file_val, Patience_threshold, data, config, totalGradientSteps)
         if success:
             print('SelfModel-Training successful!')
             break
 
-    print(f'Done!')
     record_file_train.close()
     record_file_val.close()
 
-    return latents
+    return latents, loss
 
 
 if __name__ == "__main__":

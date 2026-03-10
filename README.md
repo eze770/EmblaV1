@@ -15,7 +15,7 @@ Extending DreamerV3 for robotic application and better Morphologieawareness by i
 ## Current state
 
 Core architecture done!
-SM needs rework for Performance (very slow at the moment).
+Actor needs optimisation, Code needs cleanup, SM needs Visionfilter
 
 ## Acknowledgements
 

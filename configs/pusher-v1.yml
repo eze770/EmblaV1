@@ -1,5 +1,5 @@
 environmentName: Pusher-v5
-runName: SMTestRun2
+runName: SMTestRun9
 seed: 1
 robotID: 1
 
@@ -11,11 +11,14 @@ checkpointInterval: 2000
 resume: False
 checkpointToLoad: 4k
 
-episodesBeforeStart: 5
+episodesBeforeStart: 10
 numInteractionEpisodes: 1
 numEvaluationEpisodes: 1
+maxEnvSteps: 400
 
 dreamer:
+    smFreq: 4
+
     batchSize: 32
     batchLength: 64
     imaginationHorizon: 15
@@ -38,8 +41,6 @@ dreamer:
     betaPrior: 1.0
     betaPosterior: 0.1
     entropyScale: 0.0003
-
-    smStepFreq: 2
 
     buffer:
         capacity: 50000
@@ -101,9 +102,9 @@ dreamer:
         camDist: 4.0
         nfSize: 0.4
         d_filter: 128
-        nIters: 400000
+        nIters: 500000
         displayRate: 1000
-        chunkSize: 2 ** 15
+        chunkSize: 2 ** 14
         nSamples: 64
         cameraFOV: 45.
         lossGoal: 0.0001

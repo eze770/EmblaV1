@@ -3,6 +3,8 @@ import imageio
 from gymnasium.wrappers import AddRenderObservation
 import numpy as np
 import torch
+import matplotlib.image
+from torchvision.transforms import Resize
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 env = AddRenderObservation(gym.make("Pusher-v5", render_mode="rgb_array", max_episode_steps=200), render_only=True)
@@ -39,13 +41,17 @@ while not terminated and not truncated:
 
     dt = timestep * frame_skip
 
-print("qpos: ", qpos, "qvel: ", qvel, "dt: ", dt)
+print("qpos: ", qpos, "qvel: ", qvel, "dt: ", dt, "reward: ", reward)
 #observations = torch.as_tensor(observations[1], device=device).float()
 #training_imges_snapshot = observations.view(-1, *observationShape)
 #print(training_imges_snapshot)
-
-#with imageio.get_writer(finalFilename, fps=30) as video:
- #   for ob in observations:
-  #      video.append_data(ob)
+"""
+with imageio.get_writer(finalFilename, fps=30) as video:
+    observations = torch.as_tensor(observations)
+    for ob in observations:
+        resize = Resize((32, 32))
+        ob = resize()
+        matplotlib.image.imsave("test_32.png", ob)
+        #video.append_data(ob)"""
 
 env.close()

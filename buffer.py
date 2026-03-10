@@ -63,27 +63,6 @@ class ReplayBuffer(object):
         return sample
 
 
-    def getData(self):
-        lastFilledIndex = self.bufferIndex
-
-        observations         = torch.as_tensor(self.observations[:lastFilledIndex], device=self.device).float()
-        nextObservations    = torch.as_tensor(self.nextObservations[:lastFilledIndex], device=self.device).float()
-
-        actions  = torch.as_tensor(self.actions[:lastFilledIndex], device=self.device)
-        rewards  = torch.as_tensor(self.rewards[:lastFilledIndex], device=self.device)
-        dones    = torch.as_tensor(self.dones[:lastFilledIndex], device=self.device)
-        angles   = torch.as_tensor(self.angles[:lastFilledIndex], device=torch.device(self.device))
-
-        sample = attridict({
-            "observations"      : observations,
-            "actions"           : actions,
-            "rewards"           : rewards,
-            "nextObservations"  : nextObservations,
-            "dones"             : dones,
-            "angles"            : angles})
-        return sample
-
-
     def getIndex(self):
         return self.bufferIndex
 

@@ -1,17 +1,47 @@
 import numpy as np
 # from torchvision.utils import save_image
 import matplotlib.pyplot as plt
-import matplotlib.image
 import os
-from tqdm import trange
 import torch
 from torch import nn
 from typing import Optional, Tuple, List, Union, Callable
 from networks import FBV_SM, PositionalEncoder
+from torch.amp import autocast, GradScaler
+import torch.nn.functional as F
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(device)
+def crop_center(
+        img: torch.Tensor,
+        frac: float = 0.5
+) -> torch.Tensor:
+    r"""
+  Crop center square from image.
+  """
+    h_offset = round(img.shape[1] * (frac / 2))
+    w_offset = round(img.shape[2] * (frac / 2))
+    return downscale(img[..., h_offset:-h_offset, w_offset:-w_offset], 16)
+
+
+def downscale(img, size=16):
+    """
+    img: [B, C, H, W] or [C, H, W]
+    """
+
+    if img.dim() == 3:
+        img = img.unsqueeze(0)
+
+    img = F.interpolate(
+        img,
+        size=(size, size),
+        mode="bilinear",
+        align_corners=False
+    )
+
+    return img
+
+
 def rot_X(th: float) -> np.ndarray:
     """Creates a 4x4 rotation matrix around the X-axis."""
     return np.array([
@@ -57,7 +87,8 @@ def pts_trans_matrix(theta, phi, no_inverse=False):
     w2c = transition_matrix_torch("rot_z", -theta / 180. * torch.pi)
     w2c = transition_matrix_torch("rot_y", -phi / 180. * torch.pi) @ w2c
     if not no_inverse:
-        w2c = torch.inverse(w2c)
+        dtype = w2c.dtype
+        w2c = torch.inverse(w2c.float()).to(dtype)
     return w2c
 
 
@@ -411,15 +442,17 @@ def model_forward(
     predictions = torch.zeros(len(batches), batches[0].shape[0], 2, device=device)
     latent_states = torch.zeros(len(batches), config.selfModel.d_filter//4, device=device)
 
-    c = 0
-    for batch in batches:
-        if return_outputs:
-            prediction, latent_state = model(batch)
-            predictions[c] = prediction
-        else:
-            latent_state = model(batch)
-        latent_states[c] = latent_state[0]
-        c += 1
+    with autocast("cuda"):
+        c = 0
+        for batch in batches:
+            if return_outputs:
+                prediction, latent_state = model(batch)
+                predictions[c] = prediction
+            else:
+                latent_state = model(batch)
+            latent_states[c] = latent_state[0]
+            del batch
+            c += 1
 
     raw = predictions.reshape(B, N_rays, N_samples, -1)
 
@@ -532,7 +565,7 @@ def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_si
     return model, optimizer
 
 
-def selfmodelEvalForward(config, observationShape, data, initializeLatents=False, useBatches=True):  # data is only angles, (eze)
+def selfmodelEvalForward(config, observationShape, data, initializeLatents=False, envInteraction=False):  # data is only angles, (eze)
     if config.dreamer.selfModel.positionalEncoder:
         add_name = 'PE'
     else:
@@ -541,31 +574,37 @@ def selfmodelEvalForward(config, observationShape, data, initializeLatents=False
     config.dreamer.selfModel.sim_real, config.robotID, config.seed, add_name, config.dreamer.selfModel.arm_ee,
     config.runName)
 
+    if envInteraction:
+        return_output = True
+        outputFlag = 0
+    else:
+        outputFlag = 4
+        return_output = False
+
     if initializeLatents:
         model, _ = init_models(d_input=(config.dreamer.selfModel.dof - 2) + 3, d_filter=128,
                                                        output_size=2,
                                                        FLAG_PositionalEncoder=config.dreamer.selfModel.positionalEncoder,
-                                                       return_output=False)  # SelfModel (already on device), (eze)
+                                                       return_output=return_output)  # SelfModel (already on device), (eze)
 
         os.makedirs(pretrained_selfModel_pth + "/best_model/", exist_ok=True)
         torch.save(model.state_dict(), pretrained_selfModel_pth + '/best_model/best_model.pt')
     else:
-
         model, _ = init_models(d_input=(config.dreamer.selfModel.dof - 2) + 3, d_filter=128,
                                                        pretrained_model_pth=pretrained_selfModel_pth + "/best_model/best_model.pt",
                                                        output_size=2,
                                                        FLAG_PositionalEncoder=config.dreamer.selfModel.positionalEncoder,
-                                                       return_output=False)  # SelfModel (already on device), (eze)
+                                                       return_output=return_output)  # SelfModel (already on device), (eze)
         model.eval()
         config = config.dreamer
 
         Camera_FOV = config.selfModel.cameraFOV
-        height, width = observationShape[1], observationShape[2]
+        height, width = observationShape[1]/4, observationShape[2]/4
         camera_angle_y = Camera_FOV * np.pi / 180.
         focal = 0.5 * height / np.tan(0.5 * camera_angle_y)
         focal = torch.tensor(focal, dtype=torch.float32, device="cuda")
 
-        rays_o, rays_d = get_rays(int(0.5*height), int(0.5*width), focal)
+        rays_o, rays_d = get_rays(int(height), int(width), focal)
         DOF = config.selfModel.dof
         cam_dist = config.selfModel.camDist
         nf_size = config.selfModel.nfSize
@@ -575,15 +614,14 @@ def selfmodelEvalForward(config, observationShape, data, initializeLatents=False
 
         latents = torch.zeros(config.batchSize, config.batchLength-1, config.selfModel.d_filter // 4, device=device)
 
-        if useBatches:
-            for t in range(data.shape[1]-1):
-                latents[:, t] = model_forward(config, rays_o, rays_d, near, far, model, data[:, t], DOF, chunksize, n_samples, output_flag=4)
-
-            latents = latents.reshape(-1, latents.shape[2])
+        if not envInteraction:  # uses batches, (eze)
+            for t in range(config.batchLength-1):
+                latents[:, t] = model_forward(config, rays_o, rays_d, near, far, model, data[:, t], DOF, chunksize=chunksize, n_samples=n_samples, output_flag=outputFlag)
+            #latents = latents.reshape(config.batchSize, -1, latents.shape[-1])
+            return latents
         else:
-            latents = model_forward(config, rays_o, rays_d, near, far, model, data, DOF, chunksize, n_samples, output_flag=4)
-
-        return latents
+            outputs, latents = model_forward(config, rays_o, rays_d, near, far, model, data, DOF, chunksize, n_samples, output_flag=outputFlag)
+            return latents, outputs['rgb_map']
 
 
 if __name__ == "__main__":
