@@ -9,7 +9,6 @@ from utils      import loadConfig, seedEverything, plotMetrics
 from envs       import getEnvProperties, GymPixelsProcessingWrapper, CleanGymWrapper
 from utils      import saveLossesToCSV, ensureParentFolders
 from func import selfmodelEvalForward
-import sm_train
 import time
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Torch version:", torch.__version__)
@@ -48,12 +47,13 @@ def main(configFile):
     for _ in tqdm(range(iterationsNum), desc="OverallProgress", colour="green"):
         for i in tqdm(range(config.replayRatio), desc="Dream", colour="blue"):
             one = time.time()
-            warmup = True if (config.dreamer.selfModel.nIters // ((config.dreamer.batchLength - 1) * config.dreamer.batchSize)) - (dreamer.totalGradientSteps - damageDetected) >= 0 else False
-            sampledData                          = dreamer.buffer.sample(dreamer.config.batchSize, dreamer.config.batchLength)
+            warmup = True if dreamer.totalGradientSteps < 500 else False
+            sampledData                          = dreamer.buffer.sample(dreamer.config.batchSize, dreamer.config.batchLength, damageDetected)
             if i % config.dreamer.smFreq == 0:
-                if warmup:
-                    smLatentStates, smLatestLoss = sm_train.main(config, sampledData, dreamer.totalGradientSteps)  # initialize SelfModel training, (eze)
+                if (config.dreamer.selfModel.nIters // ((config.dreamer.batchLength - 1) * config.dreamer.batchSize)) - (dreamer.totalGradientSteps - damageDetected) >= 0:
+                    smLatentStates, smLatestLoss = dreamer.selfModelTraining(sampledData)  # initialize SelfModel training, (eze)
                 else:
+                    damageDetected = 0  # reset so that buffer uses all data for wm again, (eze)
                     with torch.no_grad():
                         smLatentStates           = selfmodelEvalForward(config=config, observationShape=observationShape, data=sampledData.angles)
                 two = time.time()
@@ -73,13 +73,14 @@ def main(configFile):
 
         mostRecentScore, smLoss = dreamer.environmentInteraction(env, config.numInteractionEpisodes, seed=config.seed)
         if smLoss > smLatestLoss*100:
-            print(smLoss, "::", smLatestLoss)
-            print("\n---------------------------------------\nDamage detected!\n---------------------------------------\n")
+            print("\n", "-" * 100, "\nDamage detected!", smLoss, "::", smLatestLoss, "\n", "-" * 100, "\n")
             damageDetected = dreamer.totalGradientSteps
         if config.saveMetrics and not warmup:
             metricsBase = {"envSteps": dreamer.totalEnvSteps, "gradientSteps": dreamer.totalGradientSteps, "totalReward" : mostRecentScore}
             saveLossesToCSV(metricsFilename, metricsBase | worldModelMetrics | behaviorMetrics)
             plotMetrics(f"{metricsFilename}", savePath=f"{plotFilename}", title=f"{config.environmentName}")
+        env.close()
+        env = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))
 
 
 if __name__ == "__main__":

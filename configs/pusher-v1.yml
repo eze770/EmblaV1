@@ -1,5 +1,5 @@
 environmentName: Pusher-v5
-runName: SMTestRun9
+runName: SMTestRun12
 seed: 1
 robotID: 1
 
@@ -103,13 +103,11 @@ dreamer:
         nfSize: 0.4
         d_filter: 128
         nIters: 500000
-        displayRate: 1000
         chunkSize: 2 ** 14
         nSamples: 64
         cameraFOV: 45.
         lossGoal: 0.0001
         tr: 0.75
-        centerCropIters: 2
 
 folderNames:
     metricsFolder: metrics

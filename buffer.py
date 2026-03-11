@@ -35,10 +35,10 @@ class ReplayBuffer(object):
         self.bufferIndex = (self.bufferIndex + 1) % self.capacity
         self.full = self.full or self.bufferIndex == 0
 
-    def sample(self, batchSize, sequenceSize):
+    def sample(self, batchSize, sequenceSize, anomalyDetected):
         lastFilledIndex = self.bufferIndex - sequenceSize + 1
         assert self.full or (lastFilledIndex > batchSize), "not enough data in the buffer to sample"
-        sampleIndex = np.random.randint(0, self.capacity if self.full else lastFilledIndex, batchSize).reshape(-1, 1)
+        sampleIndex = np.random.randint(anomalyDetected, self.capacity if self.full else lastFilledIndex, batchSize).reshape(-1, 1)  # only uses postanomaly-data if damage is detected. Is 0 again after sm training, (eze)
         sequenceLength = np.arange(sequenceSize).reshape(1, -1)
 
         sampleIndex = (sampleIndex + sequenceLength) % self.capacity

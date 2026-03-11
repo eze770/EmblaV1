@@ -28,7 +28,6 @@ def downscale(img, size=16):
     """
     img: [B, C, H, W] or [C, H, W]
     """
-
     if img.dim() == 3:
         img = img.unsqueeze(0)
 
@@ -38,7 +37,6 @@ def downscale(img, size=16):
         mode="bilinear",
         align_corners=False
     )
-
     return img
 
 
@@ -565,7 +563,7 @@ def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_si
     return model, optimizer
 
 
-def selfmodelEvalForward(config, observationShape, data, initializeLatents=False, envInteraction=False):  # data is only angles, (eze)
+def selfmodelEvalForward(config, observationShape, data, initializeLatents=False, envInteraction=False):  # this function is just for getting the parameters like in the train function and setting modes, (eze)
     if config.dreamer.selfModel.positionalEncoder:
         add_name = 'PE'
     else:
