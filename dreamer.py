@@ -1,8 +1,11 @@
+import torch
 from torch.distributions import kl_divergence, Independent, OneHotCategoricalStraightThrough, Normal
 import imageio
 import matplotlib
+import matplotlib.image
 import random
 import time
+import cv2
 
 from networks import RecurrentModel, PriorNet, PosteriorNet, RewardModel, ContinueModel, EncoderConv, DecoderConv, Actor, Critic
 from utils import computeLambdaValues, Moments
@@ -192,7 +195,7 @@ class Dreamer:
 
         record_file_train = open(LOG_PATH + "/log_train.txt", "a")
         record_file_val = open(LOG_PATH + "/log_val.txt", "a")
-        Patience_threshold = 100
+        Patience_threshold = config.selfModel.patienceThreshold  # original: 100, (eze)
 
         # pretrained_model_pth = 'train_log/real_train_1_log0928_%ddof_100(0)/best_model/'%num_data
         # pretrained_model_pth = 'train_log/real_id1_10000(1)_PE(arm)/best_model/'
@@ -216,13 +219,34 @@ class Dreamer:
             latents = torch.zeros(batchSize, batchLength - 1, config.selfModel.d_filter // 4,
                                   device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
 
-            for t in range(batchLength - 1):  # -2 because we multiplied by 2, did substraction afterwards so tr stays clean, (eze)
+            for t in range(batchLength - 1):
                 one = time.time()
                 angles = training_angles_snapshot[:, t]
-                imges = training_imges_snapshot[:, t]
+                imges = training_imges_snapshot[:, t].permute(0, 2, 3, 1).cpu().numpy()  # permute because cv2 uses channel last, (eze)
 
-                # Pick an image as the target. # RGB → grayscale, (eze)
-                target_img = crop_center(imges.mean(dim=-1 if imges.shape[-1] in (1, 3) else 1))  # ColorChannel first or last, (eze)
+                # Pick an image as the target. # RGB -> colorfilter -> binary, (eze)
+                maskedImg = torch.zeros(config.batchSize, training_imges_snapshot.shape[3], training_imges_snapshot.shape[4], device=device, dtype=torch.float32)
+                for j in range(len(imges)):
+                    hsvImg = cv2.cvtColor(imges[j], cv2.COLOR_RGB2HSV)
+                    lower = np.array([140, 80, 80])
+                    upper = np.array([170, 255, 255])
+                    mask = cv2.inRange(hsvImg, lower, upper)
+
+                    kernel = np.ones((5, 5), np.uint8)
+                    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+                    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if len(contours) > 0:
+                        largest = max(contours, key=cv2.contourArea)
+                        clean_mask = np.zeros_like(mask)
+                        cv2.drawContours(clean_mask, [largest], -1, 255, -1)
+                    else:
+                        clean_mask = np.zeros_like(mask)
+                    maskedImg[j] = ((torch.from_numpy(clean_mask).to(device).float() / 255.0) > 0.5)
+                target_img = crop_center(maskedImg)  # >0.5 for binary 1 or 0, (eze)
+                matplotlib.image.imsave("testMasked.png", maskedImg[0].cpu())
+                matplotlib.image.imsave("testReal.png", training_imges_snapshot[0, 0].mean(0).cpu())
+                matplotlib.image.imsave("testTarget.png", target_img[0].cpu())
                 target_img = target_img.reshape([batchSize, -1])
 
                 if t < train_amount:
@@ -238,6 +262,7 @@ class Dreamer:
                                                                output_flag=different_arch,
                                                                n_samples=config.selfModel.nSamples)
                     two = time.time()
+                    print(two - one)
                     # Backprop!
                     rgb_predicted = outputs['rgb_map']
                     optimizer.zero_grad(set_to_none=True)
@@ -275,7 +300,7 @@ class Dreamer:
 
             loss_valid = np.mean(v_loss.item())
 
-            print("SM-Loss:", loss_valid, 'patience', patience)
+            #print("SM-Loss:", loss_valid, 'patience', patience)
             scheduler.step(loss_valid)
 
             # save test image
@@ -319,7 +344,10 @@ class Dreamer:
 
         record_file_train.close()
         record_file_val.close()
-        return latents, loss_valid
+        metrics = {
+            "smLoss" : v_loss.item()
+        }
+        return latents, loss_valid, metrics
 
     def behaviorTraining(self, fullState):
         recurrentState, latentState, smLatentState = torch.split(fullState, (self.recurrentSize, self.latentSize, self.smLatentSize), -1)
@@ -450,7 +478,8 @@ class Dreamer:
             'actorOptimizer'        : self.actorOptimizer.state_dict(),
             'totalEpisodes'         : self.totalEpisodes,
             'totalEnvSteps'         : self.totalEnvSteps,
-            'totalGradientSteps'    : self.totalGradientSteps}
+            'totalGradientSteps'    : self.totalGradientSteps,
+            'totalSelfModelSteps'   : self.totalSelfModelSteps}
         if self.config.useContinuationPrediction:
             checkpoint['continuePredictor'] = self.continuePredictor.state_dict()
         torch.save(checkpoint, checkpointPath)
@@ -477,6 +506,7 @@ class Dreamer:
         self.totalEpisodes = checkpoint['totalEpisodes']
         self.totalEnvSteps = checkpoint['totalEnvSteps']
         self.totalGradientSteps = checkpoint['totalGradientSteps']
+        self.totalSelfModelSteps = checkpoint['totalSelfModelSteps']
         if self.config.useContinuationPrediction:
             self.continuePredictor.load_state_dict(checkpoint['continuePredictor'])
 

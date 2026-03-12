@@ -3,6 +3,7 @@ import imageio
 from gymnasium.wrappers import AddRenderObservation
 import numpy as np
 import torch
+import cv2
 import matplotlib.image
 from torchvision.transforms import Resize
 
@@ -42,15 +43,44 @@ while not terminated and not truncated:
     dt = timestep * frame_skip
 
 print("qpos: ", qpos, "qvel: ", qvel, "dt: ", dt, "reward: ", reward)
+
+maskedObs = torch.zeros(1000, observationShape[0], observationShape[1])
+unfilteredObs = torch.zeros(1000, observationShape[0], observationShape[1])
+for t in range(len(observations[0])):
+    hsvImg = cv2.cvtColor(observations[t], cv2.COLOR_RGB2HSV)
+    #lower = np.array([140, 100, 30])
+    #upper = np.array([170, 255, 60])
+    lower = np.array([0, 0, 0])
+    upper = np.array([180, 255, 60])
+    mask = cv2.inRange(hsvImg, lower, upper)
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    if t == 0:
+        matplotlib.image.imsave("test_afterMask.png", mask)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if len(contours) > 0:
+        largest = max(contours, key=cv2.contourArea)
+        clean_mask = np.zeros_like(mask)
+        cv2.drawContours(clean_mask, [largest], -1, 255, -1)
+    else:
+        clean_mask = np.zeros_like(mask)
+    unfilteredObs[t] = torch.from_numpy(clean_mask).float()
+    maskedObs[t] = ((torch.from_numpy(clean_mask).float() / 255.0) > 0.5)
 #observations = torch.as_tensor(observations[1], device=device).float()
 #training_imges_snapshot = observations.view(-1, *observationShape)
 #print(training_imges_snapshot)
+print(maskedObs[1].shape)
+matplotlib.image.imsave("test_afterContours.png", maskedObs[1])
+#print(unfilteredObs[1, 240])
+#print(maskedObs[1, 240])
 """
 with imageio.get_writer(finalFilename, fps=30) as video:
-    observations = torch.as_tensor(observations)
-    for ob in observations:
+    maskedObs = torch.as_tensor(maskedObs)
+    for ob in maskedObs:
         resize = Resize((32, 32))
-        ob = resize()
+        #ob = resize()
         matplotlib.image.imsave("test_32.png", ob)
         #video.append_data(ob)"""
 

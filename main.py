@@ -30,8 +30,6 @@ def main(configFile):
     os.makedirs(videoFilenameBase, exist_ok=True)
     
     env             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))
-    envEvaluation   = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))
-    
     observationShape, actionSize, actionLow, actionHigh, dt = getEnvProperties(env)
     print(f"envProperties: obs {observationShape}, action size {actionSize}, actionLow {actionLow}, actionHigh {actionHigh}, dt {dt}")
     damageDetected = 0
@@ -51,16 +49,16 @@ def main(configFile):
             sampledData                          = dreamer.buffer.sample(dreamer.config.batchSize, dreamer.config.batchLength, damageDetected)
             if i % config.dreamer.smFreq == 0:
                 if (config.dreamer.selfModel.nIters // ((config.dreamer.batchLength - 1) * config.dreamer.batchSize)) - (dreamer.totalGradientSteps - damageDetected) >= 0:
-                    smLatentStates, smLatestLoss = dreamer.selfModelTraining(sampledData)  # initialize SelfModel training, (eze)
+                    smLatentStates, smLatestLoss, smMetrics = dreamer.selfModelTraining(sampledData)  # initialize SelfModel training, (eze)
                 else:
                     damageDetected = 0  # reset so that buffer uses all data for wm again, (eze)
                     with torch.no_grad():
-                        smLatentStates           = selfmodelEvalForward(config=config, observationShape=observationShape, data=sampledData.angles)
+                        smLatentStates                      = selfmodelEvalForward(config=config, observationShape=observationShape, data=sampledData.angles)
                 two = time.time()
-                initialStates, worldModelMetrics = dreamer.worldModelTraining(sampledData, smLatentStates)  # initial states also contains SM Latents (used for continuationpredictor), (eze)
+                initialStates, worldModelMetrics            = dreamer.worldModelTraining(sampledData, smLatentStates)  # initial states also contains SM Latents (used for continuationpredictor), (eze)
                 three = time.time()
             if not warmup:  # Only start Actor training when SM training is finished, so that no wrong policy is learned, (eze)
-                behaviorMetrics                  = dreamer.behaviorTraining(initialStates)
+                behaviorMetrics                             = dreamer.behaviorTraining(initialStates)
             four = time.time()
             dreamer.totalGradientSteps += 1
             #print(f"SM: {two-one} WM: {three-two} Actor: {four-three}")
@@ -68,7 +66,7 @@ def main(configFile):
             if dreamer.totalGradientSteps % config.checkpointInterval == 0 and config.saveCheckpoints:
                 suffix = f"{dreamer.totalGradientSteps/1000:.0f}k"
                 dreamer.saveCheckpoint(f"{checkpointFilenameBase}/{suffix}")
-                evaluationScore, _ = dreamer.environmentInteraction(envEvaluation, config.numEvaluationEpisodes, seed=config.seed, evaluation=True, saveVideo=True, filename=f"{videoFilenameBase}/{suffix}")
+                evaluationScore, _ = dreamer.environmentInteraction(env, config.numEvaluationEpisodes, seed=config.seed, evaluation=True, saveVideo=True, filename=f"{videoFilenameBase}/{suffix}")
                 print(f"Saved Checkpoint and Video at {suffix:>6} gradient steps. Evaluation score: {evaluationScore:>8.2f}")
 
         mostRecentScore, smLoss = dreamer.environmentInteraction(env, config.numInteractionEpisodes, seed=config.seed)
@@ -77,7 +75,7 @@ def main(configFile):
             damageDetected = dreamer.totalGradientSteps
         if config.saveMetrics and not warmup:
             metricsBase = {"envSteps": dreamer.totalEnvSteps, "gradientSteps": dreamer.totalGradientSteps, "totalReward" : mostRecentScore}
-            saveLossesToCSV(metricsFilename, metricsBase | worldModelMetrics | behaviorMetrics)
+            saveLossesToCSV(metricsFilename, metricsBase | worldModelMetrics | behaviorMetrics | smMetrics)
             plotMetrics(f"{metricsFilename}", savePath=f"{plotFilename}", title=f"{config.environmentName}")
         env.close()
         env = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))

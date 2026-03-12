@@ -568,9 +568,7 @@ def selfmodelEvalForward(config, observationShape, data, initializeLatents=False
         add_name = 'PE'
     else:
         add_name = 'no_PE'
-    pretrained_selfModel_pth = "train_log/%s_id%d_(%d)_%s(%s)_%s" % (
-    config.dreamer.selfModel.sim_real, config.robotID, config.seed, add_name, config.dreamer.selfModel.arm_ee,
-    config.runName)
+    pretrained_selfModel_pth = "train_log/%s_id%d_(%d)_%s(%s)_%s" % (config.dreamer.selfModel.sim_real, config.robotID, config.seed, add_name, config.dreamer.selfModel.arm_ee, config.runName)
 
     if envInteraction:
         return_output = True
