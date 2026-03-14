@@ -9,7 +9,7 @@ Extending DreamerV3 for robotic application and better Morphologieawareness by i
 ## Usage
 
 - install requirements (you might need to install some additional libs, also note that you need torch with cuda)
-- replace pusher_v5.xml in the gymnasium lib folder (yourPythonVenv/gymnasium/envs/mujoco/assets) with the file in this repo! (necessary for the colourfilter)
+- replace pusher_v5.xml in the gymnasium lib folder (yourPythonVenv/gymnasium/envs/mujoco/assets) with the file in this repo! (necessary for the colourfilter) (not in this patch)
 - run main.py to start
 - modify config to change all relevant Dreamer and FFKSM parameters
 

@@ -46,7 +46,8 @@ print("qpos: ", qpos, "qvel: ", qvel, "dt: ", dt, "reward: ", reward)
 
 maskedObs = torch.zeros(1000, observationShape[0], observationShape[1])
 unfilteredObs = torch.zeros(1000, observationShape[0], observationShape[1])
-for t in range(len(observations[0])):
+print(observations)
+for t in range(len(observations)):
     hsvImg = cv2.cvtColor(observations[t], cv2.COLOR_RGB2HSV)
     #lower = np.array([140, 100, 30])
     #upper = np.array([170, 255, 60])
@@ -57,7 +58,7 @@ for t in range(len(observations[0])):
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
     if t == 0:
-        matplotlib.image.imsave("test_afterMask.png", mask)
+        matplotlib.image.imsave("test_afterMask.png", hsvImg)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if len(contours) > 0:

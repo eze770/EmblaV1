@@ -1,5 +1,5 @@
 environmentName: Pusher-v5
-runName: SMTestRun8
+runName: SMTestRun13
 seed: 1
 robotID: 1
 
@@ -11,7 +11,7 @@ checkpointInterval: 2000
 resume: False
 checkpointToLoad: 4k
 
-episodesBeforeStart: 1
+episodesBeforeStart: 10
 numInteractionEpisodes: 1
 numEvaluationEpisodes: 1
 maxEnvSteps: 400
@@ -109,6 +109,7 @@ dreamer:
         lossGoal: 0.0001
         tr: 0.75
         patienceThreshold: 5
+        filterSize: 1
 
 folderNames:
     metricsFolder: metrics
