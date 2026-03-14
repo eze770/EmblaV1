@@ -60,7 +60,7 @@ def color_filter(config, img):
         cv2.drawContours(clean_mask, [largest], -1, 255, -1)
     else:
         clean_mask = np.zeros_like(mask)
-    maskedImg = (torch.from_numpy(clean_mask).to(device).float() > 0.5) * 20  # *20 because 0 (not robot) would be to dominant otherwise, (eze)
+    maskedImg = (torch.from_numpy(clean_mask).to(device).float() > 0.5) * 10  # *10 because 0 (not robot) would be to dominant otherwise, (eze)
     return maskedImg
 
 
