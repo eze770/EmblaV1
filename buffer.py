@@ -10,7 +10,7 @@ class ReplayBuffer(object):
         self.capacity = int(self.config.capacity)
 
         self.observations        = np.empty((self.capacity, *observation_shape), dtype=np.float32)
-        self.nextObservations   = np.empty((self.capacity, *observation_shape), dtype=np.float32)
+        self.nextObservations    = np.empty((self.capacity, *observation_shape), dtype=np.float32)
         self.actions             = np.empty((self.capacity, actions_size), dtype=np.float32)
         self.rewards             = np.empty((self.capacity, 1), dtype=np.float32)
         self.dones               = np.empty((self.capacity, 1), dtype=np.float32)
@@ -43,7 +43,7 @@ class ReplayBuffer(object):
 
         sampleIndex = (sampleIndex + sequenceLength) % self.capacity
 
-        observations         = torch.as_tensor(self.observations[sampleIndex], device=self.device).float()
+        observations      = torch.as_tensor(self.observations[sampleIndex], device=self.device).float()
         nextObservations    = torch.as_tensor(self.nextObservations[sampleIndex], device=self.device).float()
 
         actions  = torch.as_tensor(self.actions[sampleIndex], device=self.device)

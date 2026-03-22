@@ -28,9 +28,17 @@ def main(configFile):
     ensureParentFolders(metricsFilename, plotFilename, checkpointFilenameBase, videoFilenameBase)
     os.makedirs(checkpointFilenameBase, exist_ok=True)
     os.makedirs(videoFilenameBase, exist_ok=True)
-    
-    env             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))
-    observationShape, actionSize, actionLow, actionHigh, dt = getEnvProperties(env)
+
+    camMode = config.dreamer.camMode
+    smEnv             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))
+    if camMode == 1:
+        wmEnv             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name="ego_cam"), render_only=True), (64, 64))))
+    elif camMode == 2:
+        wmEnv             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name="topdown_cam"), render_only=True), (64, 64))))
+    else:
+        wmEnv = None
+
+    observationShape, actionSize, actionLow, actionHigh, dt = getEnvProperties(wmEnv)
     print(f"envProperties: obs {observationShape}, action size {actionSize}, actionLow {actionLow}, actionHigh {actionHigh}, dt {dt}")
     damageDetected = 0
     smLatestLoss = 2.0
@@ -40,7 +48,7 @@ def main(configFile):
         dreamer.loadCheckpoint(checkpointToLoad)
 
     selfmodelEvalForward(config=config, observationShape=observationShape, data=torch.as_tensor([0, 0, 0, 0, 0, 0, 0]), initializeLatents=True)  # save one random latent state for Dreamer start, (eze)
-    dreamer.environmentInteraction(env, config.episodesBeforeStart, seed=config.seed)
+    dreamer.environmentInteraction(wmEnv, smEnv, config.episodesBeforeStart, seed=config.seed)
 
     iterationsNum = config.gradientSteps // config.replayRatio
     for _ in tqdm(range(iterationsNum), desc="OverallProgress", colour="green"):
@@ -67,10 +75,10 @@ def main(configFile):
             if dreamer.totalGradientSteps % config.checkpointInterval == 0 and config.saveCheckpoints:
                 suffix = f"{dreamer.totalGradientSteps/1000:.0f}k"
                 dreamer.saveCheckpoint(f"{checkpointFilenameBase}/{suffix}")
-                evaluationScore, _ = dreamer.environmentInteraction(env, config.numEvaluationEpisodes, seed=config.seed, evaluation=True, saveVideo=True, filename=f"{videoFilenameBase}/{suffix}")
+                evaluationScore, _ = dreamer.environmentInteraction(wmEnv, smEnv, config.numEvaluationEpisodes, seed=config.seed, evaluation=True, saveVideo=True, filename=f"{videoFilenameBase}/{suffix}")
                 print(f"Saved Checkpoint and Video at {suffix:>6} gradient steps. Evaluation score: {evaluationScore:>8.2f}")
 
-        mostRecentScore, smLoss = dreamer.environmentInteraction(env, config.numInteractionEpisodes, seed=config.seed)
+        mostRecentScore, smLoss = dreamer.environmentInteraction(wmEnv, smEnv, config.numInteractionEpisodes, seed=config.seed)
         if smLoss > smLatestLoss*100:
             print("\n", "-" * 100, "\nDamage detected!", smLoss, "::", smLatestLoss, "\n", "-" * 100, "\n")
             damageDetected = dreamer.totalGradientSteps
@@ -78,11 +86,13 @@ def main(configFile):
             metricsBase = {"envSteps": dreamer.totalEnvSteps, "gradientSteps": dreamer.totalGradientSteps, "totalReward" : mostRecentScore}
             saveLossesToCSV(metricsFilename, metricsBase | worldModelMetrics | behaviorMetrics | smMetrics)
             plotMetrics(f"{metricsFilename}", savePath=f"{plotFilename}", title=f"{config.environmentName}")
-        env.close()
-        env = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))
+        wmEnv.close()
+        smEnv.close()
+        wmEnv = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name="wm_cam"), render_only=True), (64, 64))))
+        smEnv = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="pusher-v1.yml")
+    parser.add_argument("--config", type=str, default="pusher-v5.yml")
     main(parser.parse_args().config)

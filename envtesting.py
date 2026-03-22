@@ -5,10 +5,11 @@ import numpy as np
 import torch
 import cv2
 import matplotlib.image
+import matplotlib.pyplot as plt
 from torchvision.transforms import Resize
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-env = AddRenderObservation(gym.make("Pusher-v5", render_mode="rgb_array", max_episode_steps=200), render_only=True)
+env = AddRenderObservation(gym.make("Pusher-v5", render_mode="rgb_array", max_episode_steps=200, camera_name="topdown_cam"), render_only=True)
 env.reset()
 #env.render()
 
@@ -36,13 +37,15 @@ while not terminated and not truncated:
     qpos = env.unwrapped.data.qpos.copy()[:7]
     qvel = env.unwrapped.data.qvel.copy()
     idx = idx + 1
+    plt.imshow(obs)
+    plt.show()
 
     timestep = env.unwrapped.model.opt.timestep
     frame_skip = env.unwrapped.frame_skip
 
     dt = timestep * frame_skip
 
-print("qpos: ", qpos, "qvel: ", qvel, "dt: ", dt, "reward: ", reward)
+#print("qpos: ", qpos, "qvel: ", qvel, "dt: ", dt, "reward: ", reward)
 
 maskedObs = torch.zeros(1000, observationShape[0], observationShape[1])
 unfilteredObs = torch.zeros(1000, observationShape[0], observationShape[1])
@@ -57,8 +60,8 @@ for t in range(len(observations)):
     kernel = np.ones((5, 5), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    if t == 0:
-        matplotlib.image.imsave("test_afterMask.png", hsvImg)
+    #if t == 0:
+     #   matplotlib.image.imsave("test_afterMask.png", hsvImg)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if len(contours) > 0:
