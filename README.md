@@ -1,5 +1,5 @@
 # EmblaV1
-Extending DreamerV3 for robotic application and better Morphologieawareness by implementing a FFKSM
+Extending DreamerV3 for robotic application and better Morphology awareness by implementing a FFKSM
 =======
 
 ## Projectplan

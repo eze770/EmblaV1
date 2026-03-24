@@ -29,7 +29,7 @@ def main(configFile):
     os.makedirs(checkpointFilenameBase, exist_ok=True)
     os.makedirs(videoFilenameBase, exist_ok=True)
 
-    camMode = config.dreamer.camMode
+    camMode = config.camMode
     smEnv             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))
     if camMode == 1:
         wmEnv             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name="ego_cam"), render_only=True), (64, 64))))
@@ -64,7 +64,7 @@ def main(configFile):
                     with torch.no_grad():
                         smLatentStates                      = selfmodelEvalForward(config=config, observationShape=observationShape, data=sampledData.angles)
                 two = time.time()
-                initialStates, worldModelMetrics            = dreamer.worldModelTraining(sampledData, smLatentStates)  # initial states also contains SM Latents (used for continuationpredictor), (eze)
+                initialStates, worldModelMetrics            = dreamer.worldModelTraining(sampledData, smLatentStates *10)  # initial states also contains SM Latents (used for continuationpredictor), (eze)
                 three = time.time()
             if not warmup:  # Only start Actor training when SM training is finished, so that no wrong policy is learned, (eze)
                 behaviorMetrics                             = dreamer.behaviorTraining(initialStates)

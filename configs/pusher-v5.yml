@@ -1,16 +1,16 @@
 environmentName: Pusher-v5
-runName: EmblaDualCamRun3
+runName: EmblaDualCamRun5
 seed: 1
 robotID: 1
 
-camMode: 1               # 0: one Cam, 1: first person for wm, 2: topdown for wm
+camMode: 2               # 0: one Cam, 1: first person for wm, 2: topdown for wm
 gradientSteps: 60000
 replayRatio: 100
 saveMetrics: True        # Saves metrics at replayRatio interval
 saveCheckpoints: True
 checkpointInterval: 2000
 resume: False
-checkpointToLoad: 42k
+checkpointToLoad: 18k
 
 episodesBeforeStart: 10
 numInteractionEpisodes: 1
