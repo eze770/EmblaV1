@@ -10,7 +10,7 @@ from torchvision.transforms import Resize
 import threading
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-env = AddRenderObservation(gym.make("Ant-v5", render_mode="rgb_array", max_episode_steps=1000, camera_name="third_person"), render_only=True)
+env = AddRenderObservation(gym.make("Pusher-v5", render_mode="rgb_array", max_episode_steps=1000), render_only=True)
 env.reset()
 env2 = AddRenderObservation(gym.make("Pusher-v5", render_mode="rgb_array", max_episode_steps=200, camera_name="topdown_cam"), render_only=True)
 env.reset()
@@ -43,7 +43,7 @@ observations = np.empty((1000, *observationShape), dtype=np.float32)
 idx = 0
 terminated, truncated = False, False
 while not terminated and not truncated:
-    action = np.random.uniform(-1.5, 2.0, size=8)
+    action = np.random.uniform(-1.5, 2.0, size=7)
     obs, reward, terminated, truncated, info = env.step(action)
     observations[idx] = obs
     qpos = env.unwrapped.data.qpos.copy()[:8]

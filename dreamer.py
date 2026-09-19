@@ -1,5 +1,4 @@
 import queue
-import threading
 
 import numpy
 import torch
@@ -247,16 +246,14 @@ class Dreamer:
                 rgb_predicted = outputs['rgb_map']
                 if train:
                     # Backprop!
-                    modelLock = threading.Lock()
-                    with modelLock:
-                        optimizer.zero_grad(set_to_none=True)
-                        with autocast("cuda"):
-                            loss = torch.nn.functional.mse_loss(rgb_predicted, target_img)
-                        scaler.scale(loss).backward()
-                        scaler.step(optimizer)
-                        scaler.update()
-                        loss_train = loss.item()
-                        three = time.time()
+                    optimizer.zero_grad(set_to_none=True)
+                    with autocast("cuda"):
+                        loss = torch.nn.functional.mse_loss(rgb_predicted, target_img)
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+                    loss_train = loss.item()
+                    three = time.time()
                 else:
                     # Evaluate testing
                     torch.no_grad()
@@ -302,7 +299,6 @@ class Dreamer:
             except:
                 print("\nSelf-model store-exception!!\n")
 
-            loss_v_last = loss_valid
             # os.makedirs(LOG_PATH + "epoch_%d_model" % i, exist_ok=True)
             # torch.save(model.state_dict(), LOG_PATH + 'epoch_%d_model/nerf.pt' % i)
             # torch.cuda.empty_cache()    # to save memory
@@ -384,8 +380,6 @@ class Dreamer:
     @torch.no_grad()
     def environmentInteraction(self, wmEnv, smEnv, numEpisodes, seed=None, evaluation=False, saveVideo=False, liveView=False, dreamerLiveView=False, filename="videos/unnamedVideo", fps=30, macroBlockSize=16):
         scores = []
-        overalMovement = 0
-        overalMovements = numpy.zeros(8)
         for i in range(numEpisodes):
             recurrentState, latentState = torch.zeros(1, self.recurrentSize, device=self.device), torch.zeros(1, self.latentSize, device=self.device)
             action = torch.zeros(1, self.actionSize).to(self.device)
@@ -396,23 +390,19 @@ class Dreamer:
             encodedObservation = self.encoder(torch.from_numpy(wmObservation).float().unsqueeze(0).to(self.device))
             angles = torch.as_tensor(smEnv.unwrapped.data.qpos.copy()[:self.config.selfModel.dof], device=self.device, dtype=torch.float32).unsqueeze(0)
 
-            maxEnergy = self.config.envReward.max_energy
-            energy = maxEnergy
             currentScore, stepCount, done, frames = 0, 0, False, []
-            modelLock = threading.Lock()
             while not done:
-                with modelLock:
-                    smLatentState, smPrediction = self_model_forward(config=self.configFile, model=self.selfModel.eval(), arm_angle=angles, output_flag=0, observation_shape=self.observationShape)
-                    smPrediction = smPrediction['rgb_map']
-                    target_img = crop_center(torch.from_numpy(smObservation).unsqueeze(0)).mean(dim=-1 if smObservation.shape[-1] in (1, 3) else 1).to(device).reshape(1, -1)
+                smLatentState, smPrediction = self_model_forward(config=self.configFile, model=self.selfModel.eval(), arm_angle=angles, output_flag=0, observation_shape=self.observationShape)
+                smPrediction = smPrediction['rgb_map']
+                target_img = crop_center(torch.from_numpy(smObservation).unsqueeze(0)).mean(dim=-1 if smObservation.shape[-1] in (1, 3) else 1).to(device).reshape(1, -1)
                 with autocast("cuda"):
                     sm_loss = torch.nn.functional.mse_loss(smPrediction, target_img)
                 #print("smLatentStateSize: ", smLatentState.size(), "recurrentStateSize: ", recurrentState.size(), "latentStateSize: ", latentState.size())  # debuging, (eze)
                 recurrentState                  = self.recurrentModel(recurrentState, latentState, action)
                 latentState, _                  = self.posteriorNet(torch.cat((recurrentState, encodedObservation.view(1, -1)), -1))
-                modulatedState                  = self.filmLayer(torch.cat((recurrentState, latentState, smLatentState * self.config.smToWmRatio), -1), torch.tensor([energy/maxEnergy], device=self.device, dtype=torch.float32))
+                fullState                       = torch.cat((recurrentState, latentState, smLatentState * self.config.smToWmRatio), -1)
 
-                action          = self.actor(modulatedState)
+                action          = self.actor(fullState)
                 actionNumpy     = action.cpu().numpy().reshape(-1)
 
                 if wmEnv:
@@ -424,36 +414,8 @@ class Dreamer:
                     nextObservation = nextWmObservation
                     envtype = smEnv
 
-                if envs.in_energy_zone(envtype):
-                    energy += 50
-                else:
-                    energy -= 1
-                #if envs.check_collision_with_obstacles(envtype):  # already present in the standard ant reward function (eze)
-                #    reward -= 1
-                if energy == 0:
-                    done = True
-                reward -= abs((800 - energy) * 0.005)  # small penalty for too much or too little energy (eze)
-
-                l = 0
-                movePenalty = 0
-                for j in actionNumpy:  # Penalty for using one part too often (eze)
-                    overalMovement += abs(j)
-                    overalMovements[l] += abs(j)
-                    if overalMovements[l] >= overalMovement * 0.2:
-                        reward -= abs(j)
-                        movePenalty = abs(j)
-                    l += 1
-
-                # Penalty for bad Vision/ too much angle of central body-part (eze)
-                _, x, y, _ = envtype.unwrapped.data.qpos[3:7]  # (w, x, y, z) (eze)
-                up_z = 1 - 2 * (x ** 2 + y ** 2)
-                up_z_pen = 0
-                if up_z < 0.5:
-                    reward -= abs((1 - up_z) * 2)
-                    up_z_pen = up_z
-
-                if stepCount % 10 == 0:
-                    print("Overall: ", reward, "   Energy: ", energy, "   MovementDist: ", movePenalty, "   Vision: ", up_z_pen)
+                if stepCount % 100 == 0:
+                    print("Reward: ", reward)
                 angles = torch.as_tensor(smEnv.unwrapped.data.qpos.copy()[:self.config.selfModel.dof], device=self.device, dtype=torch.float32)  # qpos from documentation, (eze)
                 if not evaluation:
                     self.buffer.add(wmObservation, smObservation, actionNumpy, reward, nextWmObservation, nextObservation, done, angles)
