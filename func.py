@@ -451,6 +451,8 @@ def self_model_forward(
     # Sample query points along each ray.
     # query_points: [B, N_rays, N_samples, 3]
     # z_vals:       [B, N_rays, N_samples]
+    if arm_angle.dim() > 2:
+        arm_angle = arm_angle.reshape((-1, arm_angle.shape[-1]))
     query_points, z_vals = sample_stratified(
         rays_o, rays_d, arm_angle, near, far, n_samples=n_samples)
     # Prepare batches.

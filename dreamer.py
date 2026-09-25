@@ -211,7 +211,7 @@ class Dreamer:
             model = self.selfModel
             optimizer = self.selfModelOptimizer
 
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=20, verbose=True)
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=20)
             latents = torch.zeros(batchSize, batchLength - 1, config.selfModel.d_filter // 4, device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
 
             for t in range(batchLength - 1):
@@ -269,6 +269,7 @@ class Dreamer:
             loss_valid = np.mean(v_loss.item())
             #print("SM-Loss:", loss_valid, 'patience', patience)
             scheduler.step(loss_valid)
+            print(scheduler.get_last_lr())
 
             # save test image
             np_image_combine = np.hstack(valid_image[0])
@@ -319,11 +320,8 @@ class Dreamer:
     def behaviorTraining(self, fullState):
         recurrentState, latentState, smLatentState = torch.split(fullState, (self.recurrentSize, self.latentSize, self.smLatentSize), -1)
         fullStates, logprobs, entropies, auxLosses = [], [], [], []
-        energy = torch.randint(0, 1000, (self.config.batchLength - 1, self.config.batchSize))
         for _ in range(self.config.imaginationHorizon):
-            fullState = self.filmLayer(fullState, torch.tensor([energy/self.config.envReward.max_energy], device=self.device, dtype=torch.float32))
             action, logprob, entropy = self.actor(fullState.detach(), training=True)
-            energy = energy - 1
             recurrentState = self.recurrentModel(recurrentState, latentState, action)
             latentState, _ = self.priorNet(recurrentState)
 
