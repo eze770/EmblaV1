@@ -15,7 +15,7 @@ A detailed description of EmblaV1 is provided at additionalMaterials/DreamerFFKS
 
 ## Current state
 
-* EmblaV1 done -> Result: DreamerV3 is already very good with limited vision, sm is redundant for EmblaV1
+* EmblaV1 done -> Result: DreamerV3 is already very good with limited vision and seems to create its own intrinsic selfmodel -> SM is redundant for EmblaV1
 
 ## Acknowledgements
 

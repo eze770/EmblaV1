@@ -104,7 +104,7 @@ class Dreamer:
         reconstructionDistribution =  Independent(Normal(reconstructionMeans, 1), len(self.observationShape))
         reconstructionLoss         = -reconstructionDistribution.log_prob(data.observations[:, 1:]).mean()
 
-        fullStates = torch.cat((fullStates, smLatentStates.view(self.config.batchSize, self.config.batchLength - 1, -1)), dim=-1)
+        fullStates = torch.cat((fullStates, smLatentStates), dim=-1)
 
         rewardDistribution  =  self.rewardPredictor(fullStates)
         rewardLoss          = -rewardDistribution.log_prob(data.rewards[:, 1:].squeeze(-1)).mean()
