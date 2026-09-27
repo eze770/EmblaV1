@@ -64,7 +64,9 @@ def main(configFile):
                 else:
                     damageDetected = 0  # reset so that buffer uses all data for wm again, (eze)
                     with torch.no_grad():
-                        smLatentStates                      = self_model_forward(config=config, model=dreamer.selfModel.eval(), arm_angle=sampledData.angles, output_flag=4, observation_shape=observationShape)
+                        data = sampledData.angles.reshape(-1, sampledData.angles.shape[-1])
+                        smLatentStates, _                   = self_model_forward(config=config, model=dreamer.selfModel.eval(), arm_angle=data, output_flag=0, observation_shape=observationShape)
+                        smLatentStates = smLatentStates.view(config.dreamer.batchSize, config.dreamer.batchLength, -1)[:, :config.dreamer.batchLength-1]
                 two = time.time()
                 initialStates, worldModelMetrics            = dreamer.worldModelTraining(sampledData, smLatentStates * config.dreamer.smToWmRatio)  # initial states also contains SM Latents (used for continuationpredictor), (eze)
             if not warmup:  # Only start Actor training when SM training is finished, so that no wrong policy is learned, (eze)
