@@ -189,7 +189,7 @@ class Dreamer:
         height, width = training_imges_snapshot[0, 0].shape[1:]
         training_imges_snapshot = training_imges_snapshot.reshape(batchSize, batchLength, -1, height, width)
         training_angles_snapshot = training_angles_snapshot.reshape(batchSize, batchLength, DOF)
-        train_amount = int((batchLength - 1) * tr)
+        train_amount = int((batchSize) * tr)
         loss_v_last = np.inf
         patience = 0
         min_loss = self.smMinLoss
@@ -214,18 +214,18 @@ class Dreamer:
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=20)
             latents = torch.zeros(batchSize, batchLength - 1, config.selfModel.d_filter // 4, device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
 
-            for t in range(batchLength - 1):
+            for t in range(batchSize):
                 one = time.time()
-                angles = training_angles_snapshot[:, t]
-                imges = training_imges_snapshot[:, t].permute(0, 2, 3, 1).cpu().numpy()  # permute because cv2 uses channel last, (eze)
+                angles = training_angles_snapshot[t, :-1]
+                imges = training_imges_snapshot[t, :-1].permute(0, 2, 3, 1).cpu().numpy()  # permute because cv2 uses channel last, (eze)
 
                 # Pick an image as the target. # RGB -> colourfilter -> binary, (eze)
-                maskedImg = torch.zeros(config.batchSize, training_imges_snapshot.shape[3], training_imges_snapshot.shape[4], device=device, dtype=torch.float32)
+                maskedImg = torch.zeros(config.batchLength-1, training_imges_snapshot.shape[3], training_imges_snapshot.shape[4], device=device, dtype=torch.float32)
                 for j in range(len(imges)):
                     maskedImg[j] = color_filter(config, imges[j])
                 target_img = crop_center(maskedImg)  # also downscales, (eze)
                 #img = target_img[0, 0].cpu().numpy()
-                target_img = target_img.reshape([batchSize, -1])
+                target_img = target_img.reshape([batchLength-1, -1])
                 #matplotlib.image.imsave(LOG_PATH + '/image/' + "test.png", img, cmap='gray')
 
                 if t < train_amount:
@@ -237,7 +237,7 @@ class Dreamer:
 
                 # Run one iteration of TinyNeRF and get the rendered RGB image.
                 with autocast("cuda"):
-                    latents[:, t], outputs = self_model_forward(config=self.configFile,
+                    latents[t, :], outputs = self_model_forward(config=self.configFile,
                                                                 model=model,
                                                                 arm_angle=angles,
                                                                 output_flag=different_arch,
